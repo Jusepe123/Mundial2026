@@ -1,0 +1,1 @@
+ALTER TABLE scorers ADD COLUMN IF NOT EXISTS shirt_number INT;

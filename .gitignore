@@ -1,0 +1,16 @@
+# Secrets
+secrets.env
+opencode.json
+.env
+
+# Personal assets (add your own portada.jpg locally)
+app/assets/portada.jpg
+
+# Cache / temp
+.expo/
+node_modules/
+supabase/.temp/
+supabase/supabase/
+
+# Local docs
+CONTEXT_EXTENDED.md

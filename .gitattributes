@@ -1,0 +1,3 @@
+*.png text=false binary
+*.jpg text=false binary
+*.ttf text=false binary
