@@ -3,6 +3,14 @@ import { View, Text, StyleSheet } from "react-native"
 import TeamCrest from "./TeamCrest"
 import { colors } from "../theme/colors"
 
+function formatScore(match: Match): string {
+    const score = `${match.home_score} - ${match.away_score}`
+    if (match.home_penalties != null && match.away_penalties != null) {
+        return `${score} (${match.home_penalties}-${match.away_penalties} pen.)`
+    }
+    return score
+}
+
 interface Match {
     id: string
     home_team: string
@@ -11,6 +19,8 @@ interface Match {
     away_flag: string | null
     home_score: number | null
     away_score: number | null
+    home_penalties: number | null
+    away_penalties: number | null
     status: string
     stage: string
 }
@@ -69,9 +79,16 @@ export default function MatchPicksTable({ match, picks, players, currentPlayerId
                     </View>
                     <View style={styles.center}>
                         {match.home_score != null ? (
-                            <Text style={styles.score}>
-                                {match.home_score} - {match.away_score}
-                            </Text>
+                            <>
+                                <Text style={styles.score}>
+                                    {match.home_score} - {match.away_score}
+                                </Text>
+                                {match.home_penalties != null && match.away_penalties != null && (
+                                    <Text style={styles.penaltyText}>
+                                        ({match.home_penalties}-{match.away_penalties} pen.)
+                                    </Text>
+                                )}
+                            </>
                         ) : (
                             <Text style={styles.vs}>VS</Text>
                         )}
@@ -171,6 +188,12 @@ const styles = StyleSheet.create({
         color: colors.accent,
         fontSize: 18,
         fontWeight: "bold",
+    },
+    penaltyText: {
+        color: colors.textSecondary,
+        fontSize: 11,
+        fontWeight: "600",
+        marginTop: 2,
     },
     stage: {
         color: colors.textSecondary,

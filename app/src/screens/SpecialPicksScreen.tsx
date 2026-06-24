@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
 import {
     View,
     Text,
     TextInput,
     TouchableOpacity,
     ScrollView,
+    RefreshControl,
     StyleSheet,
     ActivityIndicator,
     Alert,
@@ -72,6 +73,7 @@ export default function SpecialPicksScreen() {
     const [draftSelections, setDraftSelections] = useState<Record<string, string>>({})
     const [saving, setSaving] = useState<Record<string, boolean>>({})
     const [saved, setSaved] = useState<Record<string, boolean>>({})
+    const [refreshing, setRefreshing] = useState(false)
 
     const { data: configs } = useQuery({
         queryKey: ["scoring_special"],
@@ -184,8 +186,24 @@ export default function SpecialPicksScreen() {
         queryClient.invalidateQueries({ queryKey: ["special_picks"] })
     }
 
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true)
+        try {
+            await queryClient.invalidateQueries({ queryKey: ["special_picks"] })
+            await queryClient.invalidateQueries({ queryKey: ["scoring_special"] })
+        } finally {
+            setRefreshing(false)
+        }
+    }, [])
+
     return (
-        <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+        <ScrollView
+            style={styles.container}
+            contentContainerStyle={styles.scrollContent}
+            refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
+            }
+        >
             <Text style={styles.title}>Pronósticos especiales</Text>
             <Text style={styles.subtitle}>
                 Predecí los resultados generales del torneo

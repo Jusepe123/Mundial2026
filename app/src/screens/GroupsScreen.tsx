@@ -1,6 +1,6 @@
-import { useMemo } from "react"
-import { View, Text, ScrollView, StyleSheet, ActivityIndicator } from "react-native"
-import { useQuery } from "@tanstack/react-query"
+import { useCallback, useMemo, useState } from "react"
+import { View, Text, ScrollView, RefreshControl, StyleSheet, ActivityIndicator } from "react-native"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import supabase from "../lib/supabase"
 import TeamCrest from "../components/TeamCrest"
 import { colors } from "../theme/colors"
@@ -71,6 +71,9 @@ const LOCAL_GROUPS: Standing[] = [
 ]
 
 export default function GroupsScreen() {
+  const queryClient = useQueryClient()
+  const [refreshing, setRefreshing] = useState(false)
+
   const { data: standings, isLoading } = useQuery({
     queryKey: ["group_standings"],
     queryFn: async () => {
@@ -96,6 +99,15 @@ export default function GroupsScreen() {
     return GROUP_ORDER.filter((g) => map[g]).map((g) => ({ group: g, teams: map[g] }))
   }, [standings])
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true)
+    try {
+      await queryClient.invalidateQueries({ queryKey: ["group_standings"] })
+    } finally {
+      setRefreshing(false)
+    }
+  }, [])
+
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -105,7 +117,13 @@ export default function GroupsScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.scrollContent}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
+      }
+    >
       {grouped.map(({ group, teams }) => {
         const leaderPoints = teams.length > 0 ? Math.max(...teams.map((t) => t.points)) : -1
         return (

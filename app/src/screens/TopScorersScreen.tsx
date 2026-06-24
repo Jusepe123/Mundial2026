@@ -1,5 +1,6 @@
-import { View, Text, ScrollView, StyleSheet } from "react-native"
-import { useQuery } from "@tanstack/react-query"
+import { useCallback, useState } from "react"
+import { View, Text, ScrollView, RefreshControl, StyleSheet } from "react-native"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import supabase from "../lib/supabase"
 import PlayerFigure from "../components/PlayerFigure"
 import TeamCrest from "../components/TeamCrest"
@@ -30,6 +31,9 @@ function SectionDivider() {
 }
 
 export default function TopScorersScreen() {
+    const queryClient = useQueryClient()
+    const [refreshing, setRefreshing] = useState(false)
+
     const { data: scorers } = useQuery({
         queryKey: ["scorers"],
         queryFn: async () => {
@@ -75,8 +79,24 @@ export default function TopScorersScreen() {
         staleTime: 30_000,
     })
 
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true)
+        try {
+            await queryClient.invalidateQueries({ queryKey: ["scorers"] })
+            await queryClient.invalidateQueries({ queryKey: ["teamGoals"] })
+        } finally {
+            setRefreshing(false)
+        }
+    }, [])
+
     return (
-        <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <ScrollView
+            style={styles.container}
+            contentContainerStyle={styles.content}
+            refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
+            }
+        >
             <View style={styles.topSpacer} />
 
             <Text style={styles.sectionTitle}>⚽ Top 5 Goleadores</Text>

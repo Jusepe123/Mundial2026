@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { View, Text, StyleSheet } from "react-native"
 import { LinearGradient } from "expo-linear-gradient"
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs"
@@ -117,6 +117,7 @@ function MainNavigator() {
     const player = usePlayerStore((s) => s.player)
     const updatePoints = usePlayerStore((s) => s.updatePoints)
     const queryClient = useQueryClient()
+    const lastTabPress = useRef<Record<string, number>>({})
 
     useEffect(() => {
         const channel = supabase
@@ -195,26 +196,76 @@ function MainNavigator() {
                 name="Partidos"
                 component={MatchesNavigator}
                 options={{ tabBarLabel: "Partidos" }}
+                listeners={({ route }) => ({
+                    tabPress: () => {
+                        const now = Date.now()
+                        const last = lastTabPress.current[route.name] ?? 0
+                        if (now - last < 300) {
+                            queryClient.invalidateQueries()
+                        }
+                        lastTabPress.current[route.name] = now
+                    },
+                })}
             />
             <Tab.Screen
                 name="Goleadores"
                 component={TopScorersScreen}
                 options={{ tabBarLabel: "Goleadores" }}
+                listeners={({ route }) => ({
+                    tabPress: () => {
+                        const now = Date.now()
+                        const last = lastTabPress.current[route.name] ?? 0
+                        if (now - last < 300) {
+                            queryClient.invalidateQueries()
+                        }
+                        lastTabPress.current[route.name] = now
+                    },
+                })}
             />
             <Tab.Screen
                 name="Grupos"
                 component={GroupsScreen}
                 options={{ tabBarLabel: "Grupos" }}
+                listeners={({ route }) => ({
+                    tabPress: () => {
+                        const now = Date.now()
+                        const last = lastTabPress.current[route.name] ?? 0
+                        if (now - last < 300) {
+                            queryClient.invalidateQueries()
+                        }
+                        lastTabPress.current[route.name] = now
+                    },
+                })}
             />
             <Tab.Screen
                 name="Especiales"
                 component={SpecialNavigator}
                 options={{ tabBarLabel: "Especiales" }}
+                listeners={({ route }) => ({
+                    tabPress: () => {
+                        const now = Date.now()
+                        const last = lastTabPress.current[route.name] ?? 0
+                        if (now - last < 300) {
+                            queryClient.invalidateQueries()
+                        }
+                        lastTabPress.current[route.name] = now
+                    },
+                })}
             />
             <Tab.Screen
                 name="Ranking"
                 component={RankingNavigator}
                 options={{ tabBarLabel: "Ranking" }}
+                listeners={({ route }) => ({
+                    tabPress: () => {
+                        const now = Date.now()
+                        const last = lastTabPress.current[route.name] ?? 0
+                        if (now - last < 300) {
+                            queryClient.invalidateQueries()
+                        }
+                        lastTabPress.current[route.name] = now
+                    },
+                })}
             />
         </Tab.Navigator>
     )

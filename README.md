@@ -133,3 +133,6 @@ mundial-2026/
 ## Licencia
 
 Uso privado — no redistribuir.
+
+## Repositorio git
+https://github.com/Jusepe123/Mundial2026

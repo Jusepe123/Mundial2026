@@ -28,6 +28,8 @@ interface Match {
     stage: string
     home_score: number | null
     away_score: number | null
+    home_penalties: number | null
+    away_penalties: number | null
     status: string
     picks_closed: boolean
 }
@@ -211,6 +213,11 @@ export default function PickScreen({ route, navigation }: any) {
                         <Text style={styles.finalScoreText}>
                             {match.home_score} - {match.away_score}
                         </Text>
+                        {match.home_penalties != null && match.away_penalties != null && (
+                            <Text style={styles.finalPenaltyText}>
+                                ({match.home_penalties}-{match.away_penalties} pen.)
+                            </Text>
+                        )}
                         <Text style={styles.finalScoreLabel}>Resultado final</Text>
                     </View>
                 )}
@@ -369,6 +376,12 @@ const styles = StyleSheet.create({
         color: colors.textSecondary,
         fontSize: 13,
         marginTop: 4,
+    },
+    finalPenaltyText: {
+        color: colors.textSecondary,
+        fontSize: 14,
+        fontWeight: "600",
+        marginTop: 2,
     },
     sectionTitle: {
         color: colors.text,

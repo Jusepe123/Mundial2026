@@ -14,6 +14,8 @@ interface Match {
     away_flag: string | null
     home_score: number | null
     away_score: number | null
+    home_penalties: number | null
+    away_penalties: number | null
     status: string
     stage: string
 }

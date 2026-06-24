@@ -33,7 +33,7 @@ Deno.serve(async (req) => {
         // 1. Fetch the match
         const { data: match, error: matchError } = await supabase
             .from('matches')
-            .select('home_score, away_score, stage')
+            .select('home_score, away_score, home_penalties, away_penalties, stage')
             .eq('id', match_id)
             .single();
 
@@ -44,6 +44,18 @@ Deno.serve(async (req) => {
         if (match.home_score === null || match.away_score === null) {
             throw new Error("Match home_score or away_score is null.");
         }
+
+        // Determine the actual winner:
+        // If penalties exist (both non-null), winner is who won the shootout.
+        // Otherwise, winner is determined by regulation score.
+        const decidedByPenalties = match.home_penalties !== null && match.away_penalties !== null;
+        const actualHomeWins = decidedByPenalties
+            ? (match.home_penalties! > match.away_penalties!)
+            : (match.home_score > match.away_score);
+        const actualAwayWins = decidedByPenalties
+            ? (match.away_penalties! > match.home_penalties!)
+            : (match.away_score > match.home_score);
+        const actualDraw = !actualHomeWins && !actualAwayWins;
 
         // 2. Fetch scoring config for this stage
         const { data: config, error: configError } = await supabase
@@ -82,12 +94,13 @@ Deno.serve(async (req) => {
                 let points_earned: number;
 
                 // 4. Calculate points
+                // Exact match is always based on regulation score
                 if (pick.predicted_home === match.home_score && pick.predicted_away === match.away_score) {
                     points_earned = exact_points;
                 } else if (
-                    (pick.predicted_home > pick.predicted_away && match.home_score > match.away_score) ||
-                    (pick.predicted_home < pick.predicted_away && match.home_score < match.away_score) ||
-                    (pick.predicted_home === pick.predicted_away && match.home_score === match.away_score)
+                    (pick.predicted_home > pick.predicted_away && actualHomeWins) ||
+                    (pick.predicted_home < pick.predicted_away && actualAwayWins) ||
+                    (pick.predicted_home === pick.predicted_away && actualDraw)
                 ) {
                     points_earned = winner_points;
                 } else {

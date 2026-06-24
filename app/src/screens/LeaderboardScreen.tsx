@@ -4,6 +4,7 @@ import {
     Text,
     FlatList,
     TouchableOpacity,
+    RefreshControl,
     StyleSheet,
     ActivityIndicator,
     Modal,
@@ -56,6 +57,8 @@ interface Match {
     away_flag: string | null
     home_score: number | null
     away_score: number | null
+    home_penalties: number | null
+    away_penalties: number | null
     status: string
     stage: string
     match_date: string
@@ -313,6 +316,7 @@ export default function LeaderboardScreen() {
     const [modalPoints, setModalPoints] = useState(0)
     const [modalLoading, setModalLoading] = useState(false)
     const [ownStats, setOwnStats] = useState<PlayerStats | null>(null)
+    const [refreshing, setRefreshing] = useState(false)
 
     const { data: leaderboard, isLoading } = useQuery({
         queryKey: ["leaderboard"],
@@ -424,6 +428,22 @@ export default function LeaderboardScreen() {
         staleTime: 15_000,
     })
 
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true)
+        try {
+            await queryClient.invalidateQueries({ queryKey: ["leaderboard"] })
+            await queryClient.invalidateQueries({ queryKey: ["currentMatch"] })
+            await queryClient.invalidateQueries({ queryKey: ["matchStats"] })
+            await queryClient.invalidateQueries({ queryKey: ["currentPicks"] })
+            if (player?.id) {
+                const stats = await fetchPlayerStats(player.id)
+                setOwnStats(stats)
+            }
+        } finally {
+            setRefreshing(false)
+        }
+    }, [player?.id])
+
     const isTournamentOver = matchStats?.pending === 0 && matchStats?.total > 0
 
     const podium = useMemo(() => {
@@ -520,6 +540,9 @@ export default function LeaderboardScreen() {
                 contentContainerStyle={styles.listContent}
                 data={leaderboard}
                 keyExtractor={(item) => item.id}
+                refreshControl={
+                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
+                }
                 ListHeaderComponent={
                     <>
                         <Text style={styles.title}>Ranking</Text>

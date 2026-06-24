@@ -12,6 +12,8 @@ interface Match {
     stage: string;
     home_score: number | null;
     away_score: number | null;
+    home_penalties: number | null;
+    away_penalties: number | null;
     status: string;
     picks_closed: boolean;
 }
@@ -191,6 +193,8 @@ Deno.serve(async (req) => {
                     stage: stage,
                     home_score: match.score.fullTime.home,
                     away_score: match.score.fullTime.away,
+                    home_penalties: match.score.penalties?.home ?? null,
+                    away_penalties: match.score.penalties?.away ?? null,
                     status: status,
                     picks_closed: picksClosed,
                 };

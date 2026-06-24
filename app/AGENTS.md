@@ -1,5 +1,5 @@
 # Mundial 2026 — Documentación del Proyecto
-> Última actualización: 23-jun-2026
+> Última actualización: 24-jun-2026
 
 ## Stack Tecnológico
 
@@ -59,6 +59,7 @@ mundial-2026/
     │   ├── 008_scorers_table.sql
     │   ├── 009_scorers_shirt_number.sql
     │   ├── 010_round_of_32_and_new_scoring.sql
+    │   ├── 011_penalty_columns.sql
     │   └── 20260614070205_fix_team_name_aliases.sql
     └── functions/
         ├── sync-matches/index.ts
@@ -108,6 +109,23 @@ RootStack (sin header)
 - **LeaderboardScreen**: 3 queries de count reemplazadas por 1 query que trae solo `status`
 - **PickScreen**: scoring_config se cachea 5 min (casi nunca cambia)
 
+## Pull-to-Refresh y Doble Tap
+- **Doble tap en tab** (AppNavigator.tsx): al presionar dos veces cualquier tab en menos de 300ms, invalida TODAS las queries (refresca toda la app).
+- **Pull-to-refresh** en las 5 pantallas principales: cada una tiene `RefreshControl` que invalida las queries específicas de esa pantalla.
+
+## Buscador en MatchListScreen
+- `searchText` state + `TextInput` debajo del control segmentado.
+- Filtra partidos por `home_team` o `away_team` (case-insensitive) dentro del segmento activo.
+- Si no hay resultados, muestra "No se encontraron partidos para '[texto]'".
+- Botón X para limpiar. El texto persiste al cambiar de segmento.
+
+## Manejo de Penales
+- **DB**: `home_penalties INT`, `away_penalties INT` en matches (migración 011).
+- **sync-matches**: lee `score.penalties` de la API y los persiste.
+- **calculate-points**: si hay penales, el ganador real es quien gana los penales. Exacts se compara contra score reglamentario. Ganador se compara contra el verdadero ganador.
+- **UI**: se muestra como `1-1 (4-2 pen.)` en MatchListScreen, MatchPicksTable y PickScreen.
+- El usuario pronostica solo el score reglamentario (sin cambios en PickScreen).
+
 ### Banderas (TeamCrest + flags.ts)
 - `prefetchFlags()` se llama tras hydrate, con concurrencia limitada a 4 conexiones
 - 3 niveles de fallback: crest → flag CDN → alt CDN → inicial dorada
@@ -155,7 +173,7 @@ ListFooterComponent:
 |-------|---------------|-------------|
 | `group_standings` | id, group_name, team_name, position | UNIQUE(group_name, team_name) |
 | `players` | id, username, device_id, total_points, created_at | UNIQUE(username), UNIQUE(device_id) |
-| `matches` | id, external_id, home_team, away_team, home_flag, away_flag, match_date, stage, home_score, away_score, status, picks_closed | UNIQUE(external_id) |
+| `matches` | id, external_id, home_team, away_team, home_flag, away_flag, match_date, stage, home_score, away_score, home_penalties, away_penalties, status, picks_closed | UNIQUE(external_id) |
 | `picks` | id, player_id, match_id, predicted_home, predicted_away, points_earned, created_at | FK players/matches, UNIQUE(player_id, match_id) |
 | `special_picks` | id, player_id, category, prediction, points_earned, created_at | FK players, UNIQUE(player_id, category) |
 | `scoring_config` | id, stage, exact_points, winner_points, participation_points, special_points, deadline, updated_at | UNIQUE(stage) |
@@ -175,12 +193,12 @@ ListFooterComponent:
 | semi | 50 | 25 | 1 | — | — |
 | third_place | 30 | 15 | 1 | — | — |
 | final | 75 | 35 | 1 | — | — |
-| special_first | — | — | — | 50 | 2026-06-16T20:37Z |
-| special_second | — | — | — | 30 | 2026-06-16T20:37Z |
-| special_third | — | — | — | 20 | 2026-06-16T20:37Z |
-| special_fourth | — | — | — | 15 | 2026-06-16T20:37Z |
-| special_surprise | — | — | — | 25 | 2026-06-16T20:37Z |
-| special_scorer | — | — | — | 35 | 2026-06-16T20:37Z |
+| special_first | — | — | — | 50 | 2026-06-28T14:59Z |
+| special_second | — | — | — | 30 | 2026-06-28T14:59Z |
+| special_third | — | — | — | 20 | 2026-06-28T14:59Z |
+| special_fourth | — | — | — | 15 | 2026-06-28T14:59Z |
+| special_surprise | — | — | — | 25 | 2026-06-28T14:59Z |
+| special_scorer | — | — | — | 35 | 2026-06-28T14:59Z |
 
 ### RPC Functions (SECURITY DEFINER)
 - **upsert_pick**: verifica device_id + picks_closed (excepción si match cerrado o no existe), INSERT ON CONFLICT DO UPDATE
@@ -191,12 +209,14 @@ ListFooterComponent:
 ### sync-matches
 - Fetch football-data.org API, upsert en `matches`
 - Normaliza alias de equipos (Czechia → Czech Republic, etc.)
+- Lee `score.penalties.home/away` de la API y los guarda en `home_penalties`/`away_penalties`
 - Trigger `calculate-points` si match cambió a finished
 - **Selective sync**: filtra matches antes del upsert loop. Skip: already-finished, far-future (>3h) si ya están en DB. Procesa: live, transitioning, upcoming (<3h), y matches no existentes en DB. Usa `SELECT external_id, status` inicial + `Map<external_id, status>` para lookup O(1).
 - **Cron job** (`pg_cron` + `pg_net`): `net.http_post` cada 2 min a sync-matches para sync incluso sin frontend abierto. Corre en paralelo al sync del frontend (idempotente, upsert onConflict).
 
 ### calculate-points
 - Para cada pick: exacto → exact_points, ganador correcto → winner_points, participación → participation_points
+- **Penales**: si `home_penalties` y `away_penalties` no son null, el ganador real es quien ganó los penales (no el score reglamentario). Exacto se compara contra score reglamentario; ganador se compara contra el verdadero ganador (penales si existen, reglamentario si no).
 - Recalcula `players.total_points` como suma de `picks.points_earned` + `special_picks.points_earned` (Promise.all paralelo)
 
 ## Flujo de Autenticación
@@ -230,6 +250,7 @@ ListFooterComponent:
 | 15-jun | — | ✅ OTA (no publicado) | Server-side picks_closed validation en upsert_pick RPC; error handling en PickScreen |
 | 15-jun | — | ✅ DB+SQL | pg_cron + pg_net cron job cada 2 min para sync-matches (funciona sin frontend) |
 | 23-jun | — | ✅ DB, Edge Function, Código | round_of_32, nuevos puntajes, PlayerFigure, TopScorersScreen, splash negro, cleanup GitHub |
+| 24-jun | — | 🚀 OTA + DB + Edge Function | Pull-to-refresh, doble tap en tab para refrescar, buscador de países en Partidos, deadline especiales → 28-jun 14:59, penales Opción A (home_penalties/away_penalties, scoring justo) |
 
 ## Reglas para el Agente
 

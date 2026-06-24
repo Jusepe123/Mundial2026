@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
     View,
     Text,
+    TextInput,
     TouchableOpacity,
     SectionList,
+    RefreshControl,
     StyleSheet,
     Animated,
     ActivityIndicator,
 } from "react-native"
+import { Ionicons } from "@expo/vector-icons"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigation } from "@react-navigation/native"
 import supabase from "../lib/supabase"
@@ -29,6 +32,8 @@ interface Match {
     stage: string
     home_score: number | null
     away_score: number | null
+    home_penalties: number | null
+    away_penalties: number | null
     status: string
     picks_closed: boolean
 }
@@ -142,6 +147,8 @@ export default function MatchListScreen() {
     const queryClient = useQueryClient()
     const player = usePlayerStore((s) => s.player)
     const [segment, setSegment] = useState<"live" | "finished">("live")
+    const [refreshing, setRefreshing] = useState(false)
+    const [searchText, setSearchText] = useState("")
 
     const { data: matches, isLoading } = useQuery({
         queryKey: ["matches"],
@@ -218,15 +225,37 @@ export default function MatchListScreen() {
             .sort((a, b) => new Date(b.match_date).getTime() - new Date(a.match_date).getTime())
     }, [matches, segment])
 
+    const searchedMatches = useMemo(() => {
+        const query = searchText.toLowerCase().trim()
+        if (!query) return filteredMatches
+        return filteredMatches.filter(
+            (m) =>
+                m.home_team.toLowerCase().includes(query) ||
+                m.away_team.toLowerCase().includes(query)
+        )
+    }, [filteredMatches, searchText])
+
     const sections = useMemo(() => {
         const groups: Record<string, Match[]> = {}
-        for (const match of filteredMatches) {
+        for (const match of searchedMatches) {
             const title = formatDate(match.match_date)
             if (!groups[title]) groups[title] = []
             groups[title].push(match)
         }
         return Object.entries(groups).map(([title, data]) => ({ title, data }))
-    }, [filteredMatches])
+    }, [searchedMatches])
+
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true)
+        try {
+            await supabase.functions.invoke("sync-matches", {}).catch(() => {})
+            await queryClient.invalidateQueries({ queryKey: ["matches"] })
+            await queryClient.invalidateQueries({ queryKey: ["currentMatch"] })
+            await queryClient.invalidateQueries({ queryKey: ["userPicks"] })
+        } finally {
+            setRefreshing(false)
+        }
+    }, [])
 
     if (isLoading) {
         return (
@@ -235,6 +264,9 @@ export default function MatchListScreen() {
             </View>
         )
     }
+
+    const hasSearch = searchText.trim().length > 0
+    const showEmptySearch = hasSearch && searchedMatches.length === 0
 
     return (
         <View style={styles.container}>
@@ -257,98 +289,133 @@ export default function MatchListScreen() {
                 </TouchableOpacity>
             </View>
 
-            <SectionList
-                sections={sections}
-                keyExtractor={(item) => item.id}
-                contentContainerStyle={styles.listContent}
-                renderSectionHeader={({ section }) => (
-                    <Text style={styles.sectionHeader}>{section.title}</Text>
+            <View style={styles.searchContainer}>
+                <Ionicons name="search" size={16} color={colors.textSecondary} style={styles.searchIcon} />
+                <TextInput
+                    style={styles.searchInput}
+                    placeholder="Buscar país..."
+                    placeholderTextColor={colors.textSecondary}
+                    value={searchText}
+                    onChangeText={setSearchText}
+                />
+                {hasSearch && (
+                    <TouchableOpacity onPress={() => setSearchText("")} style={styles.searchClear}>
+                        <Ionicons name="close-circle" size={18} color={colors.textSecondary} />
+                    </TouchableOpacity>
                 )}
-                renderItem={({ item }) => {
-                    const pick = picksMap[item.id]
-                    const isLive = item.status === "live"
-                    const isFinished = FINISHED_STATUSES.includes(item.status)
+            </View>
 
-                    return (
-                        <TouchableOpacity
-                            style={styles.card}
-                            activeOpacity={isFinished || (!item.picks_closed && !isLive) ? 0.7 : 1}
-                            onPress={
-                                isFinished
-                                    ? () => navigation.navigate("MatchDetail", { match_id: item.id })
-                                    : item.picks_closed || isLive
-                                        ? undefined
-                                        : () => navigation.navigate("Pick", { match_id: item.id })
-                            }
-                        >
-                            <View style={styles.cardContent}>
-                                <View style={styles.teamContainer}>
-                                    <TeamCrest crest={item.home_flag} name={item.home_team} />
-                                    <Text style={styles.teamName} numberOfLines={1}>
-                                        {item.home_team}
-                                    </Text>
-                                </View>
+            {showEmptySearch ? (
+                <View style={styles.emptySearchContainer}>
+                    <Ionicons name="search-outline" size={48} color={colors.textSecondary} />
+                    <Text style={styles.emptySearchText}>
+                        No se encontraron partidos para "{searchText.trim()}"
+                    </Text>
+                </View>
+            ) : (
+                <SectionList
+                    sections={sections}
+                    keyExtractor={(item) => item.id}
+                    contentContainerStyle={styles.listContent}
+                    refreshControl={
+                        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
+                    }
+                    renderSectionHeader={({ section }) => (
+                        <Text style={styles.sectionHeader}>{section.title}</Text>
+                    )}
+                    renderItem={({ item }) => {
+                        const pick = picksMap[item.id]
+                        const isLive = item.status === "live"
+                        const isFinished = FINISHED_STATUSES.includes(item.status)
 
-                                <View style={styles.centerCol}>
-                                    {(isFinished || isLive) && item.home_score !== null ? (
-                                        <Text style={styles.scoreText}>
-                                            {item.home_score} - {item.away_score}
+                        return (
+                            <TouchableOpacity
+                                style={styles.card}
+                                activeOpacity={isFinished || (!item.picks_closed && !isLive) ? 0.7 : 1}
+                                onPress={
+                                    isFinished
+                                        ? () => navigation.navigate("MatchDetail", { match_id: item.id })
+                                        : item.picks_closed || isLive
+                                            ? undefined
+                                            : () => navigation.navigate("Pick", { match_id: item.id })
+                                }
+                            >
+                                <View style={styles.cardContent}>
+                                    <View style={styles.teamContainer}>
+                                        <TeamCrest crest={item.home_flag} name={item.home_team} />
+                                        <Text style={styles.teamName} numberOfLines={1}>
+                                            {item.home_team}
                                         </Text>
-                                    ) : (
-                                        <>
-                                            <Text style={styles.vsText}>VS</Text>
-                                            <Text style={styles.timeText}>
-                                                {formatTimeShort(item.match_date)}
-                                            </Text>
-                                        </>
+                                    </View>
+
+                                    <View style={styles.centerCol}>
+                                        {(isFinished || isLive) && item.home_score !== null ? (
+                                            <>
+                                                <Text style={styles.scoreText}>
+                                                    {item.home_score} - {item.away_score}
+                                                </Text>
+                                                {item.home_penalties != null && item.away_penalties != null && (
+                                                    <Text style={styles.penaltyLabel}>
+                                                        ({item.home_penalties}-{item.away_penalties} pen.)
+                                                    </Text>
+                                                )}
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Text style={styles.vsText}>VS</Text>
+                                                <Text style={styles.timeText}>
+                                                    {formatTimeShort(item.match_date)}
+                                                </Text>
+                                            </>
+                                        )}
+                                    </View>
+
+                                    <View style={styles.teamContainer}>
+                                        <TeamCrest crest={item.away_flag} name={item.away_team} />
+                                        <Text style={styles.teamName} numberOfLines={1}>
+                                            {item.away_team}
+                                        </Text>
+                                    </View>
+                                </View>
+
+                                <Text style={styles.stageLabel}>{getMatchLabel(item)}</Text>
+
+                                <View style={styles.badgeRow}>
+                                    {isLive && <LiveBadge />}
+                                    {segment === "live" && !isLive && <UpcomingBadge />}
+                                    {item.status === "scheduled" && !item.picks_closed && pick && (
+                                        <View style={styles.savedBadge}>
+                                            <Text style={styles.savedBadgeText}>Guardado</Text>
+                                        </View>
+                                    )}
+                                    {item.status === "scheduled" && item.picks_closed && (
+                                        <View style={styles.closedBadge}>
+                                            <Text style={styles.closedBadgeText}>Cerrado</Text>
+                                        </View>
                                     )}
                                 </View>
 
-                                <View style={styles.teamContainer}>
-                                    <TeamCrest crest={item.away_flag} name={item.away_team} />
-                                    <Text style={styles.teamName} numberOfLines={1}>
-                                        {item.away_team}
+                                {pick && (
+                                    <Text style={styles.pickText}>
+                                        Tu pronóstico: {pick.predicted_home} - {pick.predicted_away}
+                                        {segment === "finished" && pick.points_earned !== null && (
+                                            <Text style={styles.pointsEarned}>  ({pick.points_earned} pts)</Text>
+                                        )}
                                     </Text>
-                                </View>
-                            </View>
-
-                            <Text style={styles.stageLabel}>{getMatchLabel(item)}</Text>
-
-                            <View style={styles.badgeRow}>
-                                {isLive && <LiveBadge />}
-                                {segment === "live" && !isLive && <UpcomingBadge />}
-                                {item.status === "scheduled" && !item.picks_closed && pick && (
-                                    <View style={styles.savedBadge}>
-                                        <Text style={styles.savedBadgeText}>Guardado</Text>
-                                    </View>
                                 )}
-                                {item.status === "scheduled" && item.picks_closed && (
-                                    <View style={styles.closedBadge}>
-                                        <Text style={styles.closedBadgeText}>Cerrado</Text>
-                                    </View>
+
+                                {segment === "finished" && isFinished && !pick && (
+                                    <Text style={styles.noPickText}>Sin pronóstico — 0 pts</Text>
                                 )}
-                            </View>
 
-                            {pick && (
-                                <Text style={styles.pickText}>
-                                    Tu pronóstico: {pick.predicted_home} - {pick.predicted_away}
-                                    {segment === "finished" && pick.points_earned !== null && (
-                                        <Text style={styles.pointsEarned}>  ({pick.points_earned} pts)</Text>
-                                    )}
-                                </Text>
-                            )}
-
-                            {segment === "finished" && isFinished && !pick && (
-                                <Text style={styles.noPickText}>Sin pronóstico — 0 pts</Text>
-                            )}
-
-                            {(item.picks_closed || isLive) && !isFinished && (
-                                <View style={styles.lockedOverlay} />
-                            )}
-                        </TouchableOpacity>
-                    )
-                }}
-            />
+                                {(item.picks_closed || isLive) && !isFinished && (
+                                    <View style={styles.lockedOverlay} />
+                                )}
+                            </TouchableOpacity>
+                        )
+                    }}
+                />
+            )}
         </View>
     )
 }
@@ -513,6 +580,12 @@ const styles = StyleSheet.create({
         fontSize: 18,
         fontWeight: "bold",
     },
+    penaltyLabel: {
+        color: colors.textSecondary,
+        fontSize: 10,
+        fontWeight: "600",
+        marginTop: 1,
+    },
     pickText: {
         color: colors.textSecondary,
         fontSize: 12,
@@ -547,5 +620,40 @@ const styles = StyleSheet.create({
         height: 1,
         backgroundColor: colors.border,
         marginVertical: 8,
+    },
+    searchContainer: {
+        flexDirection: "row",
+        alignItems: "center",
+        backgroundColor: colors.surface,
+        borderRadius: 10,
+        marginHorizontal: 16,
+        marginBottom: 12,
+        paddingHorizontal: 12,
+        height: 40,
+    },
+    searchIcon: {
+        marginRight: 8,
+    },
+    searchInput: {
+        flex: 1,
+        color: colors.text,
+        fontSize: 14,
+        paddingVertical: 0,
+    },
+    searchClear: {
+        marginLeft: 8,
+        padding: 2,
+    },
+    emptySearchContainer: {
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+        paddingHorizontal: 32,
+        gap: 16,
+    },
+    emptySearchText: {
+        color: colors.textSecondary,
+        fontSize: 15,
+        textAlign: "center",
     },
 })
