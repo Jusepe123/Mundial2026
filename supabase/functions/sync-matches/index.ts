@@ -52,15 +52,15 @@ Deno.serve(async (req) => {
     const errors: string[] = [];
 
     try {
-        // 0. Fetch all existing match statuses in a single query for O(1) lookup
+        // 0. Fetch all existing match data in a single query for O(1) lookup
         const { data: existingMatches } = await supabase
             .from('matches')
-            .select('external_id, status');
+            .select('external_id, status, home_score, away_score, home_penalties, away_penalties');
 
-        const dbStatusMap = new Map<number, string>();
+        const dbMatchMap = new Map<number, { status: string; home_score: number | null; away_score: number | null; home_penalties: number | null; away_penalties: number | null }>();
         if (existingMatches) {
             for (const m of existingMatches) {
-                dbStatusMap.set(m.external_id, m.status);
+                dbMatchMap.set(m.external_id, { status: m.status, home_score: m.home_score, away_score: m.away_score, home_penalties: m.home_penalties, away_penalties: m.away_penalties });
             }
         }
 
@@ -82,24 +82,31 @@ Deno.serve(async (req) => {
         const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
 
         const relevantMatches = allMatches.filter((match: any) => {
-            const dbStatus = dbStatusMap.get(match.id);
+            const dbData = dbMatchMap.get(match.id);
 
             // Always process live matches
             if (match.status === 'IN_PLAY' || match.status === 'PAUSED' || match.status === 'LIVE') {
                 return true;
             }
 
-            // Process finished matches that need calc-points
+            // Process finished matches: include if score changed vs DB
             if (match.status === 'FINISHED') {
-                // Skip if already finished in DB
-                if (dbStatus === 'finished') return false;
+                if (!dbData) return true;
+                if (dbData.status !== 'finished') return true;
+                // Skip only if scores match exactly (penalties included)
+                if (dbData.home_score === match.score.fullTime.home &&
+                    dbData.away_score === match.score.fullTime.away &&
+                    dbData.home_penalties === (match.score.penalties?.home ?? null) &&
+                    dbData.away_penalties === (match.score.penalties?.away ?? null)) {
+                    return false;
+                }
                 return true;
             }
 
             // Process scheduled/timed matches
             if (match.status === 'SCHEDULED' || match.status === 'TIMED') {
                 // Always process if not yet in DB (seed missing matches)
-                if (dbStatus === undefined) return true;
+                if (!dbData) return true;
                 // Process if upcoming within 3 hours
                 const matchDate = new Date(match.utcDate).getTime();
                 const now = Date.now();
@@ -199,8 +206,8 @@ Deno.serve(async (req) => {
                     picks_closed: picksClosed,
                 };
 
-                // Lookup old status from map (O(1), no individual SELECT)
-                const oldStatus = dbStatusMap.get(match.id);
+                // Lookup old data from map (O(1), no individual SELECT)
+                const oldData = dbMatchMap.get(match.id);
 
                 // 2. Upsert into Supabase
                 const { data: upsertedMatch, error: upsertError } = await supabase
@@ -217,10 +224,17 @@ Deno.serve(async (req) => {
                 
                 syncedMatchesCount++;
 
-                // 3. Trigger calculate-points if status changed to 'finished'
+                // 3. Trigger calculate-points if status changed to 'finished' or scores changed
                 const newStatus = upsertedMatch?.status;
+                const statusChanged = oldData?.status !== 'finished' && newStatus === 'finished';
+                const scoreChanged = oldData?.status === 'finished' && newStatus === 'finished' && (
+                    oldData.home_score !== match.score.fullTime.home ||
+                    oldData.away_score !== match.score.fullTime.away ||
+                    oldData.home_penalties !== (match.score.penalties?.home ?? null) ||
+                    oldData.away_penalties !== (match.score.penalties?.away ?? null)
+                );
 
-                if (upsertedMatch && newStatus === 'finished' && (oldStatus === 'scheduled' || oldStatus === 'live')) {
+                if (upsertedMatch && newStatus === 'finished' && (statusChanged || scoreChanged)) {
                     const calculatePointsUrl = `${SUPABASE_URL}/functions/v1/calculate-points`;
                     const calculatePointsResponse = await fetch(calculatePointsUrl, {
                         method: 'POST',

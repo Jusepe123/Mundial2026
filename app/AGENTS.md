@@ -1,5 +1,5 @@
 # Mundial 2026 — Documentación del Proyecto
-> Última actualización: 24-jun-2026
+> Última actualización: 27-jun-2026
 
 ## Stack Tecnológico
 
@@ -210,8 +210,8 @@ ListFooterComponent:
 - Fetch football-data.org API, upsert en `matches`
 - Normaliza alias de equipos (Czechia → Czech Republic, etc.)
 - Lee `score.penalties.home/away` de la API y los guarda en `home_penalties`/`away_penalties`
-- Trigger `calculate-points` si match cambió a finished
-- **Selective sync**: filtra matches antes del upsert loop. Skip: already-finished, far-future (>3h) si ya están en DB. Procesa: live, transitioning, upcoming (<3h), y matches no existentes en DB. Usa `SELECT external_id, status` inicial + `Map<external_id, status>` para lookup O(1).
+- Trigger `calculate-points` si match cambió a finished o si el score cambió en un match ya finished
+- **Selective sync**: filtra matches antes del upsert loop. Skip: already-finished con scores idénticos (incluyendo penales), far-future (>3h) si ya están en DB. Procesa: live, transitioning, score changes en finished, upcoming (<3h), y matches no existentes en DB. Usa `SELECT external_id, status, home_score, away_score, home_penalties, away_penalties` inicial + `Map<external_id, MatchData>` para lookup O(1).
 - **Cron job** (`pg_cron` + `pg_net`): `net.http_post` cada 2 min a sync-matches para sync incluso sin frontend abierto. Corre en paralelo al sync del frontend (idempotente, upsert onConflict).
 
 ### calculate-points
@@ -234,6 +234,7 @@ ListFooterComponent:
 | Pronóstico tapado | `lockedOverlay` tapa pickText | Pendiente: reemplazar overlay por badge |
 | Sin validación server-side de picks_closed | RPC upsert_pick no chequea | Corregido: upsert_pick verifica picks_closed y lanza excepción |
 | El header de la app no se actualiza con Leaderboard al cambiar de tab | Zustand no se resincroniza | Corregido: useEffect en Leaderboard sincroniza updatePoints |
+| Score incorrecto de un partido ya finished por cambio en API externa | selective sync saltaba matches finished sin comparar scores | selective sync compara scores completos + penales; trigger `calculate-points` si cambia |
 
 ## Historial de Builds & Updates
 
@@ -251,6 +252,7 @@ ListFooterComponent:
 | 15-jun | — | ✅ DB+SQL | pg_cron + pg_net cron job cada 2 min para sync-matches (funciona sin frontend) |
 | 23-jun | — | ✅ DB, Edge Function, Código | round_of_32, nuevos puntajes, PlayerFigure, TopScorersScreen, splash negro, cleanup GitHub |
 | 24-jun | — | 🚀 OTA + DB + Edge Function | Pull-to-refresh, doble tap en tab para refrescar, buscador de países en Partidos, deadline especiales → 28-jun 14:59, penales Opción A (home_penalties/away_penalties, scoring justo) |
+| 27-jun | — | ✅ Edge Function + DB | Fix score Egypt 1-1 Iran (API devolvió 1-2 temporalmente); selective sync ahora detecta cambios de score en matches finished y re-triggera calculate-points |
 
 ## Reglas para el Agente
 
