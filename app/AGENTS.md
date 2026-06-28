@@ -1,5 +1,5 @@
 # Mundial 2026 — Documentación del Proyecto
-> Última actualización: 27-jun-2026
+> Última actualización: 28-jun-2026
 
 ## Stack Tecnológico
 
@@ -193,12 +193,12 @@ ListFooterComponent:
 | semi | 50 | 25 | 1 | — | — |
 | third_place | 30 | 15 | 1 | — | — |
 | final | 75 | 35 | 1 | — | — |
-| special_first | — | — | — | 50 | 2026-06-28T14:59Z |
-| special_second | — | — | — | 30 | 2026-06-28T14:59Z |
-| special_third | — | — | — | 20 | 2026-06-28T14:59Z |
-| special_fourth | — | — | — | 15 | 2026-06-28T14:59Z |
-| special_surprise | — | — | — | 25 | 2026-06-28T14:59Z |
-| special_scorer | — | — | — | 35 | 2026-06-28T14:59Z |
+| special_first | — | — | — | 50 | 2026-06-28T18:59Z |
+| special_second | — | — | — | 30 | 2026-06-28T18:59Z |
+| special_third | — | — | — | 20 | 2026-06-28T18:59Z |
+| special_fourth | — | — | — | 15 | 2026-06-28T18:59Z |
+| special_surprise | — | — | — | 25 | 2026-06-28T18:59Z |
+| special_scorer | — | — | — | 35 | 2026-06-28T18:59Z |
 
 ### RPC Functions (SECURITY DEFINER)
 - **upsert_pick**: verifica device_id + picks_closed (excepción si match cerrado o no existe), INSERT ON CONFLICT DO UPDATE
@@ -211,7 +211,8 @@ ListFooterComponent:
 - Normaliza alias de equipos (Czechia → Czech Republic, etc.)
 - Lee `score.penalties.home/away` de la API y los guarda en `home_penalties`/`away_penalties`
 - Trigger `calculate-points` si match cambió a finished o si el score cambió en un match ya finished
-- **Selective sync**: filtra matches antes del upsert loop. Skip: already-finished con scores idénticos (incluyendo penales), far-future (>3h) si ya están en DB. Procesa: live, transitioning, score changes en finished, upcoming (<3h), y matches no existentes en DB. Usa `SELECT external_id, status, home_score, away_score, home_penalties, away_penalties` inicial + `Map<external_id, MatchData>` para lookup O(1).
+- **Selective sync**: filtra matches antes del upsert loop. Skip: already-finished con scores idénticos (incluyendo penales), far-future (>3h) si ya están en DB. Procesa: live, transitioning, score changes en finished, upcoming (<3h), matches no existentes en DB, y partidos donde DB tenga "Por definir" como equipo. Usa `SELECT external_id, status, home_score, away_score, home_penalties, away_penalties, home_team, away_team` inicial + `Map<external_id, MatchData>` para lookup O(1).
+- **Bracket propagation**: Mapeo completo del torneo (ext_ids de API). Cuando un partido de knockout termina, avanza automáticamente el ganador al siguiente partido del bracket (y el perdedor de semifinal al 3er puesto). Usa `|| "Por definir"` (no `??`) para manejar strings vacíos de la API.
 - **Cron job** (`pg_cron` + `pg_net`): `net.http_post` cada 2 min a sync-matches para sync incluso sin frontend abierto. Corre en paralelo al sync del frontend (idempotente, upsert onConflict).
 
 ### calculate-points
@@ -253,6 +254,7 @@ ListFooterComponent:
 | 23-jun | — | ✅ DB, Edge Function, Código | round_of_32, nuevos puntajes, PlayerFigure, TopScorersScreen, splash negro, cleanup GitHub |
 | 24-jun | — | 🚀 OTA + DB + Edge Function | Pull-to-refresh, doble tap en tab para refrescar, buscador de países en Partidos, deadline especiales → 28-jun 14:59, penales Opción A (home_penalties/away_penalties, scoring justo) |
 | 27-jun | — | ✅ Edge Function + DB | Fix score Egypt 1-1 Iran (API devolvió 1-2 temporalmente); selective sync ahora detecta cambios de score en matches finished y re-triggera calculate-points |
+| 28-jun | — | ✅ Edge Function + DB | Fix sync-matches: filter procesa partidos con "Por definir", bracket propagation automático (R32→R16→QF→SF→Final/3rd). Deadline especiales extendido a 18:59Z |
 
 ## Reglas para el Agente
 
@@ -290,3 +292,10 @@ cd app && eas update --branch production --message "descripción"
 
 
 APK anterior: `https://expo.dev/artifacts/eas/zLpiVmMT9Y-z40Puxg9MXwe_YTNqYwMefTsf7AlGOzo.apk`
+
+
+## Cierre de sesion
+Cada vez que se te inidique que cierres sesion deberas hacer lo siguiente, en el siguiente orden:
+- Actualiza AGENTS.md con todos los cambios implementados
+- Haz el commit a main al repositorio en git hub
+- Haz el update de la aplicacion en expo
