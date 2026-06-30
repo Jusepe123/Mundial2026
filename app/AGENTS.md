@@ -1,5 +1,5 @@
 # Mundial 2026 — Documentación del Proyecto
-> Última actualización: 28-jun-2026
+> Última actualización: 30-jun-2026
 
 ## Stack Tecnológico
 
@@ -121,9 +121,9 @@ RootStack (sin header)
 
 ## Manejo de Penales
 - **DB**: `home_penalties INT`, `away_penalties INT` en matches (migración 011).
-- **sync-matches**: lee `score.penalties` de la API y los persiste.
-- **calculate-points**: si hay penales, el ganador real es quien gana los penales. Exacts se compara contra score reglamentario. Ganador se compara contra el verdadero ganador.
-- **UI**: se muestra como `1-1 (4-2 pen.)` en MatchListScreen, MatchPicksTable y PickScreen.
+- **sync-matches**: lee `score.penalties` de la API y los persiste. La API de football-data.org incluye los goles de penales en `score.fullTime`. Cuando hay penales y el fullTime muestra un ganador, se resta el score de penales del fullTime para obtener el score reglamentario real.
+- **calculate-points**: si hay penales, el ganador real es quien gana los penales. Exacts se compara contra score reglamentario. Ganador se compara contra el verdadero ganador. `actualDraw` se basa en `home_score === away_score` (score reglamentario), no en los penales.
+- **UI**: score reglamentario en verde (`colors.accent`) y penales en gris (`textSecondary`) debajo. En PickScreen el score final también usa `colors.accent`.
 - El usuario pronostica solo el score reglamentario (sin cambios en PickScreen).
 
 ### Banderas (TeamCrest + flags.ts)
@@ -236,6 +236,8 @@ ListFooterComponent:
 | Sin validación server-side de picks_closed | RPC upsert_pick no chequea | Corregido: upsert_pick verifica picks_closed y lanza excepción |
 | El header de la app no se actualiza con Leaderboard al cambiar de tab | Zustand no se resincroniza | Corregido: useEffect en Leaderboard sincroniza updatePoints |
 | Score incorrecto de un partido ya finished por cambio en API externa | selective sync saltaba matches finished sin comparar scores | selective sync compara scores completos + penales; trigger `calculate-points` si cambia |
+| API football-data.org incluye goles de penales en score.fullTime | Bug de la API externa | sync-matches resta penales del fullTime cuando duration=PENALTY_SHOOTOUT |
+| actualDraw incorrecto con penales | actualDraw se derivaba de penales (siempre false) | actualDraw ahora usa `match.home_score === match.away_score` (reglamentario) |
 
 ## Historial de Builds & Updates
 
@@ -255,6 +257,7 @@ ListFooterComponent:
 | 24-jun | — | 🚀 OTA + DB + Edge Function | Pull-to-refresh, doble tap en tab para refrescar, buscador de países en Partidos, deadline especiales → 28-jun 14:59, penales Opción A (home_penalties/away_penalties, scoring justo) |
 | 27-jun | — | ✅ Edge Function + DB | Fix score Egypt 1-1 Iran (API devolvió 1-2 temporalmente); selective sync ahora detecta cambios de score en matches finished y re-triggera calculate-points |
 | 28-jun | — | ✅ Edge Function + DB | Fix sync-matches: filter procesa partidos con "Por definir", bracket propagation automático (R32→R16→QF→SF→Final/3rd). Deadline especiales extendido a 18:59Z |
+| 30-jun | — | 🚀 OTA + Edge Function + DB | Fix actualDraw en calculate-points (basado en score reglamentario). Fix sync-matches: resta goles de penales del fullTime. UI: PickScreen score en verde. Scores corregidos Netherlands 1-1 Morocco y Germany 1-1 Paraguay. Recálculo de puntos con actualDraw corregido. |
 
 ## Reglas para el Agente
 

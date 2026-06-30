@@ -368,7 +368,7 @@ const styles = StyleSheet.create({
         marginTop: 24,
     },
     finalScoreText: {
-        color: colors.text,
+        color: colors.accent,
         fontSize: 36,
         fontWeight: "bold",
     },

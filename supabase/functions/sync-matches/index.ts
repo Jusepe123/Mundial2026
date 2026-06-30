@@ -265,6 +265,20 @@ Deno.serve(async (req) => {
                 const rawHome = match.homeTeam.name || "Por definir";
                 const rawAway = match.awayTeam.name || "Por definir";
 
+                // API workaround: when a match goes to penalties, football-data.org
+                // includes penalty goals in score.fullTime. Subtract them to get
+                // the real regulation (90+ET) score.
+                let homeScore = match.score.fullTime.home;
+                let awayScore = match.score.fullTime.away;
+                const rawHomePenalties = match.score.penalties?.home ?? null;
+                const rawAwayPenalties = match.score.penalties?.away ?? null;
+                if (rawHomePenalties !== null && rawAwayPenalties !== null && homeScore !== null && awayScore !== null) {
+                    if (homeScore > awayScore || awayScore > homeScore) {
+                        homeScore = homeScore - rawHomePenalties;
+                        awayScore = awayScore - rawAwayPenalties;
+                    }
+                }
+
                 const newMatchData: Partial<Match> = {
                     external_id: match.id,
                     home_team: TEAM_ALIASES[rawHome] ?? rawHome,
@@ -273,10 +287,10 @@ Deno.serve(async (req) => {
                     away_flag: match.awayTeam.crest ?? null,
                     match_date: match.utcDate,
                     stage: stage,
-                    home_score: match.score.fullTime.home,
-                    away_score: match.score.fullTime.away,
-                    home_penalties: match.score.penalties?.home ?? null,
-                    away_penalties: match.score.penalties?.away ?? null,
+                    home_score: homeScore,
+                    away_score: awayScore,
+                    home_penalties: rawHomePenalties,
+                    away_penalties: rawAwayPenalties,
                     status: status,
                     picks_closed: picksClosed,
                 };
@@ -303,10 +317,10 @@ Deno.serve(async (req) => {
                 const newStatus = upsertedMatch?.status;
                 const statusChanged = oldData?.status !== 'finished' && newStatus === 'finished';
                 const scoreChanged = oldData?.status === 'finished' && newStatus === 'finished' && (
-                    oldData.home_score !== match.score.fullTime.home ||
-                    oldData.away_score !== match.score.fullTime.away ||
-                    oldData.home_penalties !== (match.score.penalties?.home ?? null) ||
-                    oldData.away_penalties !== (match.score.penalties?.away ?? null)
+                    oldData.home_score !== homeScore ||
+                    oldData.away_score !== awayScore ||
+                    oldData.home_penalties !== rawHomePenalties ||
+                    oldData.away_penalties !== rawAwayPenalties
                 );
 
                 if (upsertedMatch && newStatus === 'finished' && (statusChanged || scoreChanged)) {

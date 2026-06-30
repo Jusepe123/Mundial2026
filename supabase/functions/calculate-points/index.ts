@@ -55,7 +55,7 @@ Deno.serve(async (req) => {
         const actualAwayWins = decidedByPenalties
             ? (match.away_penalties! > match.home_penalties!)
             : (match.away_score > match.home_score);
-        const actualDraw = !actualHomeWins && !actualAwayWins;
+        const actualDraw = match.home_score === match.away_score;
 
         // 2. Fetch scoring config for this stage
         const { data: config, error: configError } = await supabase
