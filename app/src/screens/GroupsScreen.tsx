@@ -11,6 +11,7 @@ interface Standing {
   played: number
   goals_scored: number
   goals_against: number
+  goal_difference: number
   points: number
   wins: number
   draws: number
@@ -20,54 +21,54 @@ interface Standing {
 const GROUP_ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"]
 
 const LOCAL_GROUPS: Standing[] = [
-  { group_name: "A", team_name: "Mexico", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "A", team_name: "South Korea", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "A", team_name: "Czech Republic", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "A", team_name: "South Africa", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "B", team_name: "Canada", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "B", team_name: "Switzerland", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "B", team_name: "Qatar", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "B", team_name: "Bosnia and Herzegovina", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "C", team_name: "Brazil", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "C", team_name: "Morocco", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "C", team_name: "Scotland", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "C", team_name: "Haiti", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "D", team_name: "United States", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "D", team_name: "Australia", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "D", team_name: "Turkey", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "D", team_name: "Paraguay", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "E", team_name: "Germany", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "E", team_name: "Curaçao", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "E", team_name: "Ivory Coast", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "E", team_name: "Ecuador", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "F", team_name: "Netherlands", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "F", team_name: "Japan", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "F", team_name: "Tunisia", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "F", team_name: "Sweden", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "G", team_name: "Belgium", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "G", team_name: "Egypt", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "G", team_name: "Iran", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "G", team_name: "New Zealand", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "H", team_name: "Spain", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "H", team_name: "Cape Verde", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "H", team_name: "Saudi Arabia", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "H", team_name: "Uruguay", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "I", team_name: "France", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "I", team_name: "Senegal", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "I", team_name: "Norway", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "I", team_name: "Iraq", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "J", team_name: "Argentina", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "J", team_name: "Algeria", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "J", team_name: "Austria", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "J", team_name: "Jordan", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "K", team_name: "Portugal", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "K", team_name: "Uzbekistan", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "K", team_name: "Colombia", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "K", team_name: "DR Congo", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "L", team_name: "England", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "L", team_name: "Croatia", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "L", team_name: "Ghana", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
-  { group_name: "L", team_name: "Panama", played: 0, goals_scored: 0, goals_against: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "A", team_name: "Mexico", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "A", team_name: "South Korea", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "A", team_name: "Czech Republic", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "A", team_name: "South Africa", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "B", team_name: "Canada", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "B", team_name: "Switzerland", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "B", team_name: "Qatar", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "B", team_name: "Bosnia and Herzegovina", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "C", team_name: "Brazil", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "C", team_name: "Morocco", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "C", team_name: "Scotland", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "C", team_name: "Haiti", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "D", team_name: "United States", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "D", team_name: "Australia", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "D", team_name: "Turkey", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "D", team_name: "Paraguay", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "E", team_name: "Germany", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "E", team_name: "Curaçao", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "E", team_name: "Ivory Coast", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "E", team_name: "Ecuador", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "F", team_name: "Netherlands", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "F", team_name: "Japan", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "F", team_name: "Tunisia", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "F", team_name: "Sweden", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "G", team_name: "Belgium", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "G", team_name: "Egypt", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "G", team_name: "Iran", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "G", team_name: "New Zealand", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "H", team_name: "Spain", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "H", team_name: "Cape Verde", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "H", team_name: "Saudi Arabia", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "H", team_name: "Uruguay", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "I", team_name: "France", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "I", team_name: "Senegal", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "I", team_name: "Norway", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "I", team_name: "Iraq", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "J", team_name: "Argentina", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "J", team_name: "Algeria", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "J", team_name: "Austria", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "J", team_name: "Jordan", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "K", team_name: "Portugal", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "K", team_name: "Uzbekistan", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "K", team_name: "Colombia", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "K", team_name: "DR Congo", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "L", team_name: "England", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "L", team_name: "Croatia", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "L", team_name: "Ghana", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
+  { group_name: "L", team_name: "Panama", played: 0, goals_scored: 0, goals_against: 0, goal_difference: 0, points: 0, wins: 0, draws: 0, losses: 0 },
 ]
 
 export default function GroupsScreen() {
@@ -82,6 +83,7 @@ export default function GroupsScreen() {
         .select("*")
         .order("group_name", { ascending: true })
         .order("points", { ascending: false })
+        .order("goal_difference", { ascending: false })
         .order("goals_scored", { ascending: false })
       return (data ?? []) as Standing[]
     },
@@ -141,7 +143,7 @@ export default function GroupsScreen() {
             </View>
             {teams.map((team, idx) => {
               const isLeader = team.points === leaderPoints && leaderPoints > 0
-              const gd = team.goals_scored - team.goals_against
+              const gd = team.goal_difference
               return (
                 <View
                   key={team.team_name}

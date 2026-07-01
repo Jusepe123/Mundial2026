@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useCallback, useEffect, useRef } from "react"
 import { View, Text, StyleSheet } from "react-native"
 import { LinearGradient } from "expo-linear-gradient"
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs"
@@ -119,6 +119,21 @@ function MainNavigator() {
     const queryClient = useQueryClient()
     const lastTabPress = useRef<Record<string, number>>({})
 
+    // Double tap on a tab (<300ms between presses) refreshes the whole app.
+    const makeDoubleTapListeners = useCallback(
+        ({ route }: { route: { name: string } }) => ({
+            tabPress: () => {
+                const now = Date.now()
+                const last = lastTabPress.current[route.name] ?? 0
+                if (now - last < 300) {
+                    queryClient.invalidateQueries()
+                }
+                lastTabPress.current[route.name] = now
+            },
+        }),
+        [queryClient]
+    )
+
     useEffect(() => {
         const channel = supabase
             .channel("matches-changes")
@@ -196,76 +211,31 @@ function MainNavigator() {
                 name="Partidos"
                 component={MatchesNavigator}
                 options={{ tabBarLabel: "Partidos" }}
-                listeners={({ route }) => ({
-                    tabPress: () => {
-                        const now = Date.now()
-                        const last = lastTabPress.current[route.name] ?? 0
-                        if (now - last < 300) {
-                            queryClient.invalidateQueries()
-                        }
-                        lastTabPress.current[route.name] = now
-                    },
-                })}
+                listeners={makeDoubleTapListeners}
             />
             <Tab.Screen
                 name="Goleadores"
                 component={TopScorersScreen}
                 options={{ tabBarLabel: "Goleadores" }}
-                listeners={({ route }) => ({
-                    tabPress: () => {
-                        const now = Date.now()
-                        const last = lastTabPress.current[route.name] ?? 0
-                        if (now - last < 300) {
-                            queryClient.invalidateQueries()
-                        }
-                        lastTabPress.current[route.name] = now
-                    },
-                })}
+                listeners={makeDoubleTapListeners}
             />
             <Tab.Screen
                 name="Grupos"
                 component={GroupsScreen}
                 options={{ tabBarLabel: "Grupos" }}
-                listeners={({ route }) => ({
-                    tabPress: () => {
-                        const now = Date.now()
-                        const last = lastTabPress.current[route.name] ?? 0
-                        if (now - last < 300) {
-                            queryClient.invalidateQueries()
-                        }
-                        lastTabPress.current[route.name] = now
-                    },
-                })}
+                listeners={makeDoubleTapListeners}
             />
             <Tab.Screen
                 name="Especiales"
                 component={SpecialNavigator}
                 options={{ tabBarLabel: "Especiales" }}
-                listeners={({ route }) => ({
-                    tabPress: () => {
-                        const now = Date.now()
-                        const last = lastTabPress.current[route.name] ?? 0
-                        if (now - last < 300) {
-                            queryClient.invalidateQueries()
-                        }
-                        lastTabPress.current[route.name] = now
-                    },
-                })}
+                listeners={makeDoubleTapListeners}
             />
             <Tab.Screen
                 name="Ranking"
                 component={RankingNavigator}
                 options={{ tabBarLabel: "Ranking" }}
-                listeners={({ route }) => ({
-                    tabPress: () => {
-                        const now = Date.now()
-                        const last = lastTabPress.current[route.name] ?? 0
-                        if (now - last < 300) {
-                            queryClient.invalidateQueries()
-                        }
-                        lastTabPress.current[route.name] = now
-                    },
-                })}
+                listeners={makeDoubleTapListeners}
             />
         </Tab.Navigator>
     )

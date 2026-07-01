@@ -1,6 +1,15 @@
 /// <reference lib="deno.ns" />
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
+// Only sync-matches (calling with the service role key) is allowed to trigger
+// point recalculation. Without this check, any anon-key holder could force
+// recalculation for an arbitrary match_id.
+function isServiceRoleCaller(req: Request, serviceRoleKey: string): boolean {
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const token = authHeader.replace(/^Bearer\s+/i, "");
+    return token === serviceRoleKey;
+}
+
 Deno.serve(async (req) => {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey' } });
@@ -14,6 +23,13 @@ Deno.serve(async (req) => {
     }
     if (!SERVICE_ROLE_KEY) {
         throw new Error("SERVICE_ROLE_KEY is not set.");
+    }
+
+    if (!isServiceRoleCaller(req, SERVICE_ROLE_KEY)) {
+        return new Response(
+            JSON.stringify({ error: "Forbidden: calculate-points solo puede ser invocada por sync-matches." }),
+            { status: 403, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
+        );
     }
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {

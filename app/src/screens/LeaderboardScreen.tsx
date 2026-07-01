@@ -322,7 +322,10 @@ export default function LeaderboardScreen() {
     const { data: leaderboard, isLoading } = useQuery({
         queryKey: ["leaderboard"],
         queryFn: async () => {
-            const { data } = await supabase.from("leaderboard").select("*")
+            const { data } = await supabase
+                .from("leaderboard")
+                .select("*")
+                .order("total_points", { ascending: false })
             return (data ?? []) as LeaderboardEntry[]
         },
         refetchInterval: 15_000,

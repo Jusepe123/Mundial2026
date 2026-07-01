@@ -18,9 +18,6 @@ import usePlayerStore from "../store/usePlayerStore"
 import TeamCrest from "../components/TeamCrest"
 import { colors } from "../theme/colors"
 
-const SYNC_INTERVAL_DEFAULT = 120000
-const SYNC_INTERVAL_LIVE = 30000
-
 interface Match {
     id: string
     external_id: number
@@ -162,37 +159,16 @@ export default function MatchListScreen() {
         },
     })
 
-    const liveMatchExists = useMemo(() => {
-        return (matches ?? []).some((m) => m.status === "live")
-    }, [matches])
-
-    const syncTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
+    // One-time sync on mount for freshness when opening the app. Live updates after
+    // that come from the "matches-changes" Realtime subscription (AppNavigator) fed
+    // by the server-side pg_cron job (every 2min) — no need to poll sync-matches here.
     useEffect(() => {
-        const interval = liveMatchExists ? SYNC_INTERVAL_LIVE : SYNC_INTERVAL_DEFAULT
-
-        if (syncTimerRef.current) {
-            clearInterval(syncTimerRef.current)
-        }
-
-        const doSync = () => {
-            supabase.functions.invoke("sync-matches", {}).then(() => {
-                queryClient.invalidateQueries({ queryKey: ["matches"] })
-                queryClient.invalidateQueries({ queryKey: ["currentMatch"] })
-                queryClient.invalidateQueries({ queryKey: ["userPicks"] })
-            }).catch(() => {})
-        }
-
-        syncTimerRef.current = setInterval(doSync, interval)
-
-        doSync()
-
-        return () => {
-            if (syncTimerRef.current) {
-                clearInterval(syncTimerRef.current)
-            }
-        }
-    }, [liveMatchExists])
+        supabase.functions.invoke("sync-matches", {}).then(() => {
+            queryClient.invalidateQueries({ queryKey: ["matches"] })
+            queryClient.invalidateQueries({ queryKey: ["currentMatch"] })
+            queryClient.invalidateQueries({ queryKey: ["userPicks"] })
+        }).catch(() => {})
+    }, [])
 
     const { data: userPicks } = useQuery({
         queryKey: ["userPicks", player?.id],

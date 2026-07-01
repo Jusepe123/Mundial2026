@@ -1,5 +1,5 @@
 # Mundial 2026 — Documentación del Proyecto
-> Última actualización: 30-jun-2026
+> Última actualización: 01-jul-2026
 
 ## Stack Tecnológico
 
@@ -39,7 +39,7 @@ mundial-2026/
 │   │   │   └── AppNavigator.tsx   # Navegación + Splash + prefetchFlags tras hydrate
 │   │   └── screens/
 │   │       ├── WelcomeScreen.tsx  # Login/registro con username + device_id
-│   │       ├── MatchListScreen.tsx# Partidos con segmentos, Realtime, sync adaptativo 30s/120s
+│   │       ├── MatchListScreen.tsx# Partidos con segmentos, Realtime, sync-matches una vez al montar
 │   │       ├── PickScreen.tsx     # Pronóstico por partido, invalida userPicks al guardar
 │   │       ├── GroupsScreen.tsx   # Tabla de posiciones con DG/GC/GD + banderas
 │   │       ├── SpecialPicksScreen.tsx # 6 categorías especiales
@@ -105,7 +105,7 @@ RootStack (sin header)
 | currentMatch | 15s | — |
 
 ### Data fetching reducido
-- **MatchListScreen**: eliminado `refetchInterval: 30s` en matches. Sync adaptativo: 30s si hay live, 120s si no (derivado de `liveMatchExists` del cache). Realtime subscription movida a AppNavigator.
+- **MatchListScreen**: eliminado `refetchInterval: 30s` en matches. `sync-matches` se invoca una sola vez al montar la pantalla (antes había un timer de 30s/120s por dispositivo, redundante con el pg_cron cada 2 min y con riesgo de agotar el rate limit de football-data.org al escalar N dispositivos). Actualizaciones en vivo llegan por Realtime subscription (movida a AppNavigator), alimentada por el pg_cron.
 - **LeaderboardScreen**: 3 queries de count reemplazadas por 1 query que trae solo `status`
 - **PickScreen**: scoring_config se cachea 5 min (casi nunca cambia)
 
@@ -180,7 +180,7 @@ ListFooterComponent:
 
 ### Vistas
 - **leaderboard**: `SELECT id, username, total_points, RANK() OVER (ORDER BY total_points DESC) FROM players`
-- **group_standings_view**: calcula posiciones desde matches finalizados con normalización de alias
+- **group_standings_view**: calcula posiciones desde matches finalizados con normalización de alias. Devuelve `goal_difference` (goals_scored - goals_against). ORDER BY: `points DESC, goal_difference DESC, goals_scored DESC` (antes solo ordenaba por goles a favor, sin diferencia de gol — podía rankear mal a dos equipos empatados en puntos).
 
 ### Scoring Config
 
@@ -212,14 +212,15 @@ ListFooterComponent:
 - Lee `score.penalties.home/away` de la API y los guarda en `home_penalties`/`away_penalties`
 - Trigger `calculate-points` si match cambió a finished o si el score cambió en un match ya finished
 - **Selective sync**: filtra matches antes del upsert loop. Skip: already-finished de fase de grupos con scores idénticos, far-future (>3h) si ya están en DB. Procesa: live, transitioning, score changes en finished, upcoming (<3h), matches no existentes en DB, partidos donde DB tenga "Por definir" como equipo, y **todos los partidos de knockout finished** (para bracket propagation). Usa `SELECT external_id, status, home_score, away_score, home_penalties, away_penalties, home_team, away_team` inicial + `Map<external_id, MatchData>` para lookup O(1).
-- **Bracket propagation**: Mapeo completo del torneo (ext_ids de API). Cuando un partido de knockout termina, avanza automáticamente el ganador al siguiente partido del bracket (y el perdedor de semifinal al 3er puesto). Usa `|| "Por definir"` (no `??`) para manejar strings vacíos de la API. **Además del propagation en el loop principal, hay un post-processing** que lee los partidos finished desde la DB y propaga ganadores usando `home_team`/`away_team` y `home_penalties`/`away_penalties` como datos fuente. Esto asegura que incluso partidos knockout que ya estaban finished se propaguen correctamente.
+- **Bracket propagation**: Mapeo completo del torneo (ext_ids de API). Cuando un partido de knockout termina, avanza automáticamente el ganador al siguiente partido del bracket (y el perdedor de semifinal al 3er puesto). Usa `|| "Por definir"` (no `??`) para manejar strings vacíos de la API. **Además del propagation en el loop principal, hay un post-processing** que lee los partidos finished desde la DB y propaga ganadores usando `home_team`/`away_team` y `home_penalties`/`away_penalties` como datos fuente. Esto asegura que incluso partidos knockout que ya estaban finished se propaguen correctamente. `getMatchResult`/`getMatchResultFromDb` devuelven `{winner, loser}` en una sola función (antes eran 4 funciones duplicadas).
 - **Venue**: extrae `match.venue` de la API. Si es null, usa `VENUE_MAP` (diccionario hardcodeado con los 104 partidos según calendario oficial FIFA).
-- **Cron job** (`pg_cron` + `pg_net`): `net.http_post` cada 2 min a sync-matches para sync incluso sin frontend abierto. Corre en paralelo al sync del frontend (idempotente, upsert onConflict).
+- **Cron job** (`pg_cron` + `pg_net`): `net.http_post` cada 2 min a sync-matches para sync incluso sin frontend abierto. Es la única fuente de sync periódico — el frontend ya no hace polling propio (ver Data fetching reducido), solo invoca sync-matches una vez al abrir MatchListScreen y en pull-to-refresh.
 
 ### calculate-points
 - Para cada pick: exacto → exact_points, ganador correcto → winner_points, participación → participation_points
 - **Penales**: si `home_penalties` y `away_penalties` no son null, el ganador real es quien ganó los penales (no el score reglamentario). Exacto se compara contra score reglamentario; ganador se compara contra el verdadero ganador (penales si existen, reglamentario si no).
 - Recalcula `players.total_points` como suma de `picks.points_earned` + `special_picks.points_earned` (Promise.all paralelo)
+- **Autorización**: solo acepta invocaciones con `Authorization: Bearer <SERVICE_ROLE_KEY>` (rechaza con 403 cualquier otro caller, incluido el anon key). Antes cualquiera con el anon key podía forzar un recálculo de puntos para cualquier `match_id`.
 
 ## Flujo de Autenticación
 
@@ -261,6 +262,7 @@ ListFooterComponent:
 | 30-jun | — | 🚀 OTA + Edge Function + DB | Fix actualDraw en calculate-points (basado en score reglamentario). Fix sync-matches: resta goles de penales del fullTime. UI: PickScreen score en verde. Scores corregidos Netherlands 1-1 Morocco y Germany 1-1 Paraguay. Recálculo de puntos con actualDraw corregido. |
 | 30-jun | — | 🚀 OTA + Edge Function + DB | **Venue**: nueva migración 012_venue_column.sql, columna `venue` en matches. Sync-matches extrae `match.venue` de la API. Frontend muestra venue en MatchListScreen, PickScreen y MatchPicksTable. **Fix bracket propagation**: se movió la propagación fuera del condicional `statusChanged || scoreChanged` y se agregó post-processing desde DB. Corrige el caso de Paraguay vs Francia (R16) donde Francia no se propagaba. |
 | 30-jun | — | ✅ Edge Function + DB | **VENUE_MAP hardcodeado**: la API de football-data.org no provee datos de sede para este torneo (campo `venue` siempre null). Se agregó diccionario `VENUE_MAP` con los 104 partidos mapeados a sus estadios según el calendario oficial FIFA. Backfill de todas las venues vía REST API. Cleanup de todo código debug. |
+| 01-jul | — | ✅ OTA + Edge Function + DB | **Fixes de revisión de código** (excepto auth device_id, fuera de alcance por ahora — 10 jugadores, riesgo bajo): (1) `group_standings_view` ahora ordena por goal_difference antes que goals_scored (tiebreak FIFA correcto), migración `20260701000000_group_standings_gd_tiebreak.sql`. (2) LeaderboardScreen ordena `leaderboard` explícitamente por `total_points` (antes dependía del ORDER BY interno de la vista, no garantizado). (3) `calculate-points` ahora rechaza cualquier caller que no sea el service role key. (4) sync-matches: colapsadas las 4 funciones getWinner/getLoser/getWinnerFromDb/getLoserFromDb en `getMatchResult`/`getMatchResultFromDb`. (5) MatchListScreen: eliminado el polling de `sync-matches` cada 30s/120s por dispositivo (redundante con el pg_cron cada 2 min, riesgo de rate limit en football-data.org con varios dispositivos abiertos a la vez); ahora solo sincroniza una vez al montar. (6) AppNavigator: los 5 listeners de doble-tap idénticos se unificaron en `makeDoubleTapListeners`. |
 
 ## Reglas para el Agente
 

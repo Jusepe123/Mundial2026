@@ -207,28 +207,30 @@ const KNOCKOUT_BRACKET: Record<number, BracketSlot | BracketSlotSemi> = {
     537388: { winNextExtId: 537390, winSide: 'away', loseNextExtId: 537389, loseSide: 'away' },
 };
 
-function getWinner(match: any): string | null {
-    if (match.score.fullTime.home === null || match.score.fullTime.away === null) return null;
-    if (match.score.penalties?.home != null && match.score.penalties?.away != null) {
-        const name = match.score.penalties.home > match.score.penalties.away
-            ? match.homeTeam.name : match.awayTeam.name;
-        return TEAM_ALIASES[name] ?? name;
-    }
-    if (match.score.fullTime.home > match.score.fullTime.away) return TEAM_ALIASES[match.homeTeam.name] ?? match.homeTeam.name;
-    if (match.score.fullTime.away > match.score.fullTime.home) return TEAM_ALIASES[match.awayTeam.name] ?? match.awayTeam.name;
-    return null;
+interface MatchResult {
+    winner: string | null;
+    loser: string | null;
 }
 
-function getLoser(match: any): string | null {
-    if (match.score.fullTime.home === null || match.score.fullTime.away === null) return null;
-    if (match.score.penalties?.home != null && match.score.penalties?.away != null) {
-        const name = match.score.penalties.home < match.score.penalties.away
-            ? match.homeTeam.name : match.awayTeam.name;
-        return TEAM_ALIASES[name] ?? name;
+// Winner/loser are decided by penalties when present, otherwise by fullTime score.
+function getMatchResult(match: any): MatchResult {
+    if (match.score.fullTime.home === null || match.score.fullTime.away === null) {
+        return { winner: null, loser: null };
     }
-    if (match.score.fullTime.home > match.score.fullTime.away) return TEAM_ALIASES[match.awayTeam.name] ?? match.awayTeam.name;
-    if (match.score.fullTime.away > match.score.fullTime.home) return TEAM_ALIASES[match.homeTeam.name] ?? match.homeTeam.name;
-    return null;
+
+    const alias = (name: string) => TEAM_ALIASES[name] ?? name;
+    const homeName = alias(match.homeTeam.name);
+    const awayName = alias(match.awayTeam.name);
+
+    if (match.score.penalties?.home != null && match.score.penalties?.away != null) {
+        return match.score.penalties.home > match.score.penalties.away
+            ? { winner: homeName, loser: awayName }
+            : { winner: awayName, loser: homeName };
+    }
+
+    if (match.score.fullTime.home > match.score.fullTime.away) return { winner: homeName, loser: awayName };
+    if (match.score.fullTime.away > match.score.fullTime.home) return { winner: awayName, loser: homeName };
+    return { winner: null, loser: null };
 }
 
 Deno.serve(async (req) => {
@@ -479,8 +481,7 @@ Deno.serve(async (req) => {
                         const isSemi = 'winNextExtId' in bracketSlot;
                         if (isSemi) {
                             const semi = bracketSlot as BracketSlotSemi;
-                            const winTeam = getWinner(match);
-                            const loseTeam = getLoser(match);
+                            const { winner: winTeam, loser: loseTeam } = getMatchResult(match);
                             if (winTeam) {
                                 const teamCol = semi.winSide === 'home' ? 'home_team' : 'away_team';
                                 const flagCol = semi.winSide === 'home' ? 'home_flag' : 'away_flag';
@@ -496,7 +497,7 @@ Deno.serve(async (req) => {
                             advancedCount++;
                         } else {
                             const slot = bracketSlot as BracketSlot;
-                            const winTeam = getWinner(match);
+                            const { winner: winTeam } = getMatchResult(match);
                             if (winTeam) {
                                 const teamCol = slot.side === 'home' ? 'home_team' : 'away_team';
                                 const flagCol = slot.side === 'home' ? 'home_flag' : 'away_flag';
@@ -528,24 +529,16 @@ Deno.serve(async (req) => {
             .in('external_id', bracketExtIds)
             .eq('status', 'finished');
 
-        function getWinnerFromDb(m: any): string | null {
-            if (m.home_score === null || m.away_score === null) return null;
+        function getMatchResultFromDb(m: any): MatchResult {
+            if (m.home_score === null || m.away_score === null) return { winner: null, loser: null };
             if (m.home_penalties != null && m.away_penalties != null) {
-                return m.home_penalties > m.away_penalties ? m.home_team : m.away_team;
+                return m.home_penalties > m.away_penalties
+                    ? { winner: m.home_team, loser: m.away_team }
+                    : { winner: m.away_team, loser: m.home_team };
             }
-            if (m.home_score > m.away_score) return m.home_team;
-            if (m.away_score > m.home_score) return m.away_team;
-            return null;
-        }
-
-        function getLoserFromDb(m: any): string | null {
-            if (m.home_score === null || m.away_score === null) return null;
-            if (m.home_penalties != null && m.away_penalties != null) {
-                return m.home_penalties < m.away_penalties ? m.home_team : m.away_team;
-            }
-            if (m.home_score > m.away_score) return m.away_team;
-            if (m.away_score > m.home_score) return m.home_team;
-            return null;
+            if (m.home_score > m.away_score) return { winner: m.home_team, loser: m.away_team };
+            if (m.away_score > m.home_score) return { winner: m.away_team, loser: m.home_team };
+            return { winner: null, loser: null };
         }
 
         if (bracketMatches) {
@@ -556,8 +549,7 @@ Deno.serve(async (req) => {
                 const isSemi = 'winNextExtId' in bracketSlot;
                 if (isSemi) {
                     const semi = bracketSlot as BracketSlotSemi;
-                    const winTeam = getWinnerFromDb(dbMatch);
-                    const loseTeam = getLoserFromDb(dbMatch);
+                    const { winner: winTeam, loser: loseTeam } = getMatchResultFromDb(dbMatch);
                     if (winTeam) {
                         const teamCol = semi.winSide === 'home' ? 'home_team' : 'away_team';
                         const flagCol = semi.winSide === 'home' ? 'home_flag' : 'away_flag';
@@ -573,7 +565,7 @@ Deno.serve(async (req) => {
                     advancedCount++;
                 } else {
                     const slot = bracketSlot as BracketSlot;
-                    const winTeam = getWinnerFromDb(dbMatch);
+                    const { winner: winTeam } = getMatchResultFromDb(dbMatch);
                     if (winTeam) {
                         const teamCol = slot.side === 'home' ? 'home_team' : 'away_team';
                         const flagCol = slot.side === 'home' ? 'home_flag' : 'away_flag';
