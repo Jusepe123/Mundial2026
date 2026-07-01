@@ -16,6 +16,7 @@ interface Match {
     away_penalties: number | null;
     status: string;
     picks_closed: boolean;
+    venue: string | null;
 }
 
 interface BracketSlot {
@@ -42,6 +43,131 @@ const TEAM_ALIASES: Record<string, string> = {
     "Congo DR": "DR Congo",
     "United States": "United States",
     "USA": "United States",
+};
+
+const VENUE_MAP: Record<number, string> = {
+    // Group A
+    537327: "Estadio Ciudad de México",
+    537328: "Estadio Guadalajara",
+    537329: "Estadio Atlanta",
+    537330: "Estadio Guadalajara",
+    537331: "Estadio Ciudad de México",
+    537332: "Estadio Monterrey",
+    // Group B
+    537333: "Estadio Toronto",
+    537334: "Estadio Bahía de San Francisco",
+    537335: "Estadio Los Ángeles",
+    537336: "Estadio BC Place Vancouver",
+    537337: "Estadio BC Place Vancouver",
+    537338: "Estadio Seattle",
+    // Group C
+    537339: "Estadio Nueva York Nueva Jersey",
+    537340: "Estadio Boston",
+    537341: "Estadio Filadelfia",
+    537342: "Estadio Boston",
+    537343: "Estadio Miami",
+    537344: "Estadio Atlanta",
+    // Group D
+    537345: "Estadio Los Ángeles",
+    537346: "Estadio BC Place Vancouver",
+    537347: "Estadio Bahía de San Francisco",
+    537348: "Estadio Seattle",
+    537349: "Estadio Los Ángeles",
+    537350: "Estadio Bahía de San Francisco",
+    // Group E
+    537351: "Estadio Houston",
+    537352: "Estadio Filadelfia",
+    537353: "Estadio Toronto",
+    537354: "Estadio Kansas City",
+    537355: "Estadio Nueva York Nueva Jersey",
+    537356: "Estadio Filadelfia",
+    // Group F
+    537357: "Estadio Dallas",
+    537358: "Estadio Monterrey",
+    537359: "Estadio Houston",
+    537360: "Estadio Monterrey",
+    537361: "Estadio Kansas City",
+    537362: "Estadio Dallas",
+    // Group G
+    537363: "Estadio Seattle",
+    537364: "Estadio Los Ángeles",
+    537365: "Estadio Los Ángeles",
+    537366: "Estadio BC Place Vancouver",
+    537367: "Estadio BC Place Vancouver",
+    537368: "Estadio Seattle",
+    // Group H
+    537369: "Estadio Atlanta",
+    537370: "Estadio Miami",
+    537371: "Estadio Atlanta",
+    537372: "Estadio Miami",
+    537373: "Estadio Guadalajara",
+    537374: "Estadio Houston",
+    // Group I
+    537391: "Estadio Nueva York Nueva Jersey",
+    537392: "Estadio Boston",
+    537393: "Estadio Filadelfia",
+    537394: "Estadio Nueva York Nueva Jersey",
+    537395: "Estadio Boston",
+    537396: "Estadio Toronto",
+    // Group J
+    537397: "Estadio Kansas City",
+    537398: "Estadio Bahía de San Francisco",
+    537399: "Estadio Dallas",
+    537400: "Estadio Bahía de San Francisco",
+    537401: "Estadio Dallas",
+    537402: "Estadio Kansas City",
+    // Group K
+    537403: "Estadio Houston",
+    537404: "Estadio Ciudad de México",
+    537405: "Estadio Houston",
+    537406: "Estadio Guadalajara",
+    537407: "Estadio Miami",
+    537408: "Estadio Atlanta",
+    // Group L
+    537409: "Estadio Dallas",
+    537410: "Estadio Toronto",
+    537411: "Estadio Boston",
+    537412: "Estadio Toronto",
+    537413: "Estadio Nueva York Nueva Jersey",
+    537414: "Estadio Filadelfia",
+    // R32 (Partidos 73-88)
+    537415: "Estadio Boston",
+    537416: "Estadio Nueva York Nueva Jersey",
+    537417: "Estadio Los Ángeles",
+    537418: "Estadio Monterrey",
+    537419: "Estadio Toronto",
+    537420: "Estadio Los Ángeles",
+    537421: "Estadio Bahía de San Francisco",
+    537422: "Estadio Seattle",
+    537423: "Estadio Houston",
+    537424: "Estadio Dallas",
+    537425: "Estadio Ciudad de México",
+    537426: "Estadio Atlanta",
+    537427: "Estadio Miami",
+    537428: "Estadio Dallas",
+    537429: "Estadio BC Place Vancouver",
+    537430: "Estadio Kansas City",
+    // R16 (Partidos 89-96)
+    537375: "Estadio Filadelfia",
+    537376: "Estadio Houston",
+    537377: "Estadio Nueva York Nueva Jersey",
+    537378: "Estadio Ciudad de México",
+    537379: "Estadio Dallas",
+    537380: "Estadio Seattle",
+    537381: "Estadio Atlanta",
+    537382: "Estadio BC Place Vancouver",
+    // QF (Partidos 97-100)
+    537383: "Estadio Boston",
+    537384: "Estadio Los Ángeles",
+    537385: "Estadio Miami",
+    537386: "Estadio Kansas City",
+    // SF (Partidos 101-102)
+    537387: "Estadio Dallas",
+    537388: "Estadio Atlanta",
+    // Third place (Partido 103)
+    537389: "Estadio Miami",
+    // Final (Partido 104)
+    537390: "Estadio Nueva York Nueva Jersey",
 };
 
 const KNOCKOUT_BRACKET: Record<number, BracketSlot | BracketSlotSemi> = {
@@ -177,11 +303,13 @@ Deno.serve(async (req) => {
                 return true;
             }
 
-            // Process finished matches: include if score changed vs DB
+            // Process finished matches
             if (match.status === 'FINISHED') {
                 if (!dbData) return true;
                 if (dbData.status !== 'finished') return true;
-                // Skip only if scores match exactly (penalties included)
+                // Always process finished knockout matches for bracket propagation
+                if (match.stage !== 'GROUP_STAGE') return true;
+                // For group matches: skip only if scores match exactly (penalties included)
                 if (dbData.home_score === match.score.fullTime.home &&
                     dbData.away_score === match.score.fullTime.away &&
                     dbData.home_penalties === (match.score.penalties?.home ?? null) &&
@@ -293,6 +421,7 @@ Deno.serve(async (req) => {
                     away_penalties: rawAwayPenalties,
                     status: status,
                     picks_closed: picksClosed,
+                    venue: match.venue ?? VENUE_MAP[match.id] ?? null,
                 };
 
                 // Lookup old data from map (O(1), no individual SELECT)
@@ -341,40 +470,40 @@ Deno.serve(async (req) => {
                     } else {
                         finishedTriggeredCount++;
                     }
+                }
 
-                    // 4. Advance winner in knockout bracket
-                    if (stage !== 'group') {
-                        const bracketSlot = KNOCKOUT_BRACKET[match.id];
-                        if (bracketSlot) {
-                            const isSemi = 'winNextExtId' in bracketSlot;
-                            if (isSemi) {
-                                const semi = bracketSlot as BracketSlotSemi;
-                                const winTeam = getWinner(match);
-                                const loseTeam = getLoser(match);
-                                if (winTeam) {
-                                    const teamCol = semi.winSide === 'home' ? 'home_team' : 'away_team';
-                                    const flagCol = semi.winSide === 'home' ? 'home_flag' : 'away_flag';
-                                    const { error: advanceError } = await supabase.from('matches').update({ [teamCol]: winTeam, [flagCol]: null }).eq('external_id', semi.winNextExtId);
-                                    if (advanceError) errors.push(`Error advancing winner to match ${semi.winNextExtId}: ${advanceError.message}`);
-                                }
-                                if (loseTeam) {
-                                    const teamCol = semi.loseSide === 'home' ? 'home_team' : 'away_team';
-                                    const flagCol = semi.loseSide === 'home' ? 'home_flag' : 'away_flag';
-                                    const { error: relegateError } = await supabase.from('matches').update({ [teamCol]: loseTeam, [flagCol]: null }).eq('external_id', semi.loseNextExtId);
-                                    if (relegateError) errors.push(`Error advancing loser to match ${semi.loseNextExtId}: ${relegateError.message}`);
-                                }
-                                advancedCount++;
-                            } else {
-                                const slot = bracketSlot as BracketSlot;
-                                const winTeam = getWinner(match);
-                                if (winTeam) {
-                                    const teamCol = slot.side === 'home' ? 'home_team' : 'away_team';
-                                    const flagCol = slot.side === 'home' ? 'home_flag' : 'away_flag';
-                                    const { error: advanceError } = await supabase.from('matches').update({ [teamCol]: winTeam, [flagCol]: null }).eq('external_id', slot.nextExtId);
-                                    if (advanceError) errors.push(`Error advancing winner to match ${slot.nextExtId}: ${advanceError.message}`);
-                                }
-                                advancedCount++;
+                // 4. Advance winner in knockout bracket (also inside per-match loop for newly finished)
+                if (upsertedMatch && newStatus === 'finished' && stage !== 'group') {
+                    const bracketSlot = KNOCKOUT_BRACKET[match.id];
+                    if (bracketSlot) {
+                        const isSemi = 'winNextExtId' in bracketSlot;
+                        if (isSemi) {
+                            const semi = bracketSlot as BracketSlotSemi;
+                            const winTeam = getWinner(match);
+                            const loseTeam = getLoser(match);
+                            if (winTeam) {
+                                const teamCol = semi.winSide === 'home' ? 'home_team' : 'away_team';
+                                const flagCol = semi.winSide === 'home' ? 'home_flag' : 'away_flag';
+                                const { error: advanceError } = await supabase.from('matches').update({ [teamCol]: winTeam, [flagCol]: null }).eq('external_id', semi.winNextExtId);
+                                if (advanceError) errors.push(`Error advancing winner to match ${semi.winNextExtId}: ${advanceError.message}`);
                             }
+                            if (loseTeam) {
+                                const teamCol = semi.loseSide === 'home' ? 'home_team' : 'away_team';
+                                const flagCol = semi.loseSide === 'home' ? 'home_flag' : 'away_flag';
+                                const { error: relegateError } = await supabase.from('matches').update({ [teamCol]: loseTeam, [flagCol]: null }).eq('external_id', semi.loseNextExtId);
+                                if (relegateError) errors.push(`Error advancing loser to match ${semi.loseNextExtId}: ${relegateError.message}`);
+                            }
+                            advancedCount++;
+                        } else {
+                            const slot = bracketSlot as BracketSlot;
+                            const winTeam = getWinner(match);
+                            if (winTeam) {
+                                const teamCol = slot.side === 'home' ? 'home_team' : 'away_team';
+                                const flagCol = slot.side === 'home' ? 'home_flag' : 'away_flag';
+                                const { error: advanceError } = await supabase.from('matches').update({ [teamCol]: winTeam, [flagCol]: null }).eq('external_id', slot.nextExtId);
+                                if (advanceError) errors.push(`Error advancing winner to match ${slot.nextExtId}: ${advanceError.message}`);
+                            }
+                            advancedCount++;
                         }
                     }
                 }
@@ -390,7 +519,77 @@ Deno.serve(async (req) => {
         errors.push(`General error: ${generalError.message}`);
     }
 
-    // 4. Sync top scorers from football-data.org
+    // 4b. Post-processing bracket propagation from DB data
+    try {
+        const bracketExtIds = Object.keys(KNOCKOUT_BRACKET).map(Number);
+        const { data: bracketMatches } = await supabase
+            .from('matches')
+            .select('external_id, home_team, away_team, home_score, away_score, home_penalties, away_penalties, status')
+            .in('external_id', bracketExtIds)
+            .eq('status', 'finished');
+
+        function getWinnerFromDb(m: any): string | null {
+            if (m.home_score === null || m.away_score === null) return null;
+            if (m.home_penalties != null && m.away_penalties != null) {
+                return m.home_penalties > m.away_penalties ? m.home_team : m.away_team;
+            }
+            if (m.home_score > m.away_score) return m.home_team;
+            if (m.away_score > m.home_score) return m.away_team;
+            return null;
+        }
+
+        function getLoserFromDb(m: any): string | null {
+            if (m.home_score === null || m.away_score === null) return null;
+            if (m.home_penalties != null && m.away_penalties != null) {
+                return m.home_penalties < m.away_penalties ? m.home_team : m.away_team;
+            }
+            if (m.home_score > m.away_score) return m.away_team;
+            if (m.away_score > m.home_score) return m.home_team;
+            return null;
+        }
+
+        if (bracketMatches) {
+            for (const dbMatch of bracketMatches) {
+                const bracketSlot = KNOCKOUT_BRACKET[dbMatch.external_id];
+                if (!bracketSlot) continue;
+
+                const isSemi = 'winNextExtId' in bracketSlot;
+                if (isSemi) {
+                    const semi = bracketSlot as BracketSlotSemi;
+                    const winTeam = getWinnerFromDb(dbMatch);
+                    const loseTeam = getLoserFromDb(dbMatch);
+                    if (winTeam) {
+                        const teamCol = semi.winSide === 'home' ? 'home_team' : 'away_team';
+                        const flagCol = semi.winSide === 'home' ? 'home_flag' : 'away_flag';
+                        const { error: ae } = await supabase.from('matches').update({ [teamCol]: winTeam, [flagCol]: null }).eq('external_id', semi.winNextExtId);
+                        if (ae) errors.push(`Error advancing winner (post) to match ${semi.winNextExtId}: ${ae.message}`);
+                    }
+                    if (loseTeam) {
+                        const teamCol = semi.loseSide === 'home' ? 'home_team' : 'away_team';
+                        const flagCol = semi.loseSide === 'home' ? 'home_flag' : 'away_flag';
+                        const { error: re } = await supabase.from('matches').update({ [teamCol]: loseTeam, [flagCol]: null }).eq('external_id', semi.loseNextExtId);
+                        if (re) errors.push(`Error advancing loser (post) to match ${semi.loseNextExtId}: ${re.message}`);
+                    }
+                    advancedCount++;
+                } else {
+                    const slot = bracketSlot as BracketSlot;
+                    const winTeam = getWinnerFromDb(dbMatch);
+                    if (winTeam) {
+                        const teamCol = slot.side === 'home' ? 'home_team' : 'away_team';
+                        const flagCol = slot.side === 'home' ? 'home_flag' : 'away_flag';
+                        const { error: ae } = await supabase.from('matches').update({ [teamCol]: winTeam, [flagCol]: null }).eq('external_id', slot.nextExtId);
+                        if (ae) errors.push(`Error advancing winner (post) to match ${slot.nextExtId}: ${ae.message}`);
+                    }
+                    advancedCount++;
+                }
+            }
+        }
+    } catch (bracketError: any) {
+        console.error("Error in post-processing bracket propagation:", bracketError);
+        errors.push(`Post-bracket propagation error: ${bracketError.message}`);
+    }
+
+    // 5. Sync top scorers from football-data.org
     try {
         const scorersResponse = await fetch("https://api.football-data.org/v4/competitions/WC/scorers", {
             headers: {

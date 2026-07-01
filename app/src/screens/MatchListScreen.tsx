@@ -36,6 +36,7 @@ interface Match {
     away_penalties: number | null
     status: string
     picks_closed: boolean
+    venue: string | null
 }
 
 interface UserPick {
@@ -380,6 +381,13 @@ export default function MatchListScreen() {
 
                                 <Text style={styles.stageLabel}>{getMatchLabel(item)}</Text>
 
+                                {item.venue && (
+                                    <View style={styles.venueRow}>
+                                        <Ionicons name="location-outline" size={11} color={colors.textSecondary} />
+                                        <Text style={styles.venueText}>{item.venue}</Text>
+                                    </View>
+                                )}
+
                                 <View style={styles.badgeRow}>
                                     {isLive && <LiveBadge />}
                                     {segment === "live" && !isLive && <UpcomingBadge />}
@@ -615,6 +623,17 @@ const styles = StyleSheet.create({
         textTransform: "uppercase",
         letterSpacing: 1,
         marginTop: 10,
+    },
+    venueRow: {
+        flexDirection: "row",
+        justifyContent: "center",
+        alignItems: "center",
+        marginTop: 6,
+        gap: 4,
+    },
+    venueText: {
+        color: colors.textSecondary,
+        fontSize: 10,
     },
     dateDivider: {
         height: 1,

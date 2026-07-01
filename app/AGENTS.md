@@ -173,7 +173,7 @@ ListFooterComponent:
 |-------|---------------|-------------|
 | `group_standings` | id, group_name, team_name, position | UNIQUE(group_name, team_name) |
 | `players` | id, username, device_id, total_points, created_at | UNIQUE(username), UNIQUE(device_id) |
-| `matches` | id, external_id, home_team, away_team, home_flag, away_flag, match_date, stage, home_score, away_score, home_penalties, away_penalties, status, picks_closed | UNIQUE(external_id) |
+| `matches` | id, external_id, home_team, away_team, home_flag, away_flag, match_date, stage, home_score, away_score, home_penalties, away_penalties, status, picks_closed, venue | UNIQUE(external_id) |
 | `picks` | id, player_id, match_id, predicted_home, predicted_away, points_earned, created_at | FK players/matches, UNIQUE(player_id, match_id) |
 | `special_picks` | id, player_id, category, prediction, points_earned, created_at | FK players, UNIQUE(player_id, category) |
 | `scoring_config` | id, stage, exact_points, winner_points, participation_points, special_points, deadline, updated_at | UNIQUE(stage) |
@@ -211,8 +211,9 @@ ListFooterComponent:
 - Normaliza alias de equipos (Czechia → Czech Republic, etc.)
 - Lee `score.penalties.home/away` de la API y los guarda en `home_penalties`/`away_penalties`
 - Trigger `calculate-points` si match cambió a finished o si el score cambió en un match ya finished
-- **Selective sync**: filtra matches antes del upsert loop. Skip: already-finished con scores idénticos (incluyendo penales), far-future (>3h) si ya están en DB. Procesa: live, transitioning, score changes en finished, upcoming (<3h), matches no existentes en DB, y partidos donde DB tenga "Por definir" como equipo. Usa `SELECT external_id, status, home_score, away_score, home_penalties, away_penalties, home_team, away_team` inicial + `Map<external_id, MatchData>` para lookup O(1).
-- **Bracket propagation**: Mapeo completo del torneo (ext_ids de API). Cuando un partido de knockout termina, avanza automáticamente el ganador al siguiente partido del bracket (y el perdedor de semifinal al 3er puesto). Usa `|| "Por definir"` (no `??`) para manejar strings vacíos de la API.
+- **Selective sync**: filtra matches antes del upsert loop. Skip: already-finished de fase de grupos con scores idénticos, far-future (>3h) si ya están en DB. Procesa: live, transitioning, score changes en finished, upcoming (<3h), matches no existentes en DB, partidos donde DB tenga "Por definir" como equipo, y **todos los partidos de knockout finished** (para bracket propagation). Usa `SELECT external_id, status, home_score, away_score, home_penalties, away_penalties, home_team, away_team` inicial + `Map<external_id, MatchData>` para lookup O(1).
+- **Bracket propagation**: Mapeo completo del torneo (ext_ids de API). Cuando un partido de knockout termina, avanza automáticamente el ganador al siguiente partido del bracket (y el perdedor de semifinal al 3er puesto). Usa `|| "Por definir"` (no `??`) para manejar strings vacíos de la API. **Además del propagation en el loop principal, hay un post-processing** que lee los partidos finished desde la DB y propaga ganadores usando `home_team`/`away_team` y `home_penalties`/`away_penalties` como datos fuente. Esto asegura que incluso partidos knockout que ya estaban finished se propaguen correctamente.
+- **Venue**: extrae `match.venue` de la API. Si es null, usa `VENUE_MAP` (diccionario hardcodeado con los 104 partidos según calendario oficial FIFA).
 - **Cron job** (`pg_cron` + `pg_net`): `net.http_post` cada 2 min a sync-matches para sync incluso sin frontend abierto. Corre en paralelo al sync del frontend (idempotente, upsert onConflict).
 
 ### calculate-points
@@ -258,6 +259,8 @@ ListFooterComponent:
 | 27-jun | — | ✅ Edge Function + DB | Fix score Egypt 1-1 Iran (API devolvió 1-2 temporalmente); selective sync ahora detecta cambios de score en matches finished y re-triggera calculate-points |
 | 28-jun | — | ✅ Edge Function + DB | Fix sync-matches: filter procesa partidos con "Por definir", bracket propagation automático (R32→R16→QF→SF→Final/3rd). Deadline especiales extendido a 18:59Z |
 | 30-jun | — | 🚀 OTA + Edge Function + DB | Fix actualDraw en calculate-points (basado en score reglamentario). Fix sync-matches: resta goles de penales del fullTime. UI: PickScreen score en verde. Scores corregidos Netherlands 1-1 Morocco y Germany 1-1 Paraguay. Recálculo de puntos con actualDraw corregido. |
+| 30-jun | — | 🚀 OTA + Edge Function + DB | **Venue**: nueva migración 012_venue_column.sql, columna `venue` en matches. Sync-matches extrae `match.venue` de la API. Frontend muestra venue en MatchListScreen, PickScreen y MatchPicksTable. **Fix bracket propagation**: se movió la propagación fuera del condicional `statusChanged || scoreChanged` y se agregó post-processing desde DB. Corrige el caso de Paraguay vs Francia (R16) donde Francia no se propagaba. |
+| 30-jun | — | ✅ Edge Function + DB | **VENUE_MAP hardcodeado**: la API de football-data.org no provee datos de sede para este torneo (campo `venue` siempre null). Se agregó diccionario `VENUE_MAP` con los 104 partidos mapeados a sus estadios según el calendario oficial FIFA. Backfill de todas las venues vía REST API. Cleanup de todo código debug. |
 
 ## Reglas para el Agente
 

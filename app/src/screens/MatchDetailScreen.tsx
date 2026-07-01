@@ -18,6 +18,7 @@ interface Match {
     away_penalties: number | null
     status: string
     stage: string
+    venue: string | null
 }
 
 interface PickData {

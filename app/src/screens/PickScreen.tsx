@@ -11,6 +11,7 @@ import {
     Platform,
     ScrollView,
 } from "react-native"
+import { Ionicons } from "@expo/vector-icons"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import supabase from "../lib/supabase"
 import getDeviceId from "../lib/deviceId"
@@ -32,6 +33,7 @@ interface Match {
     away_penalties: number | null
     status: string
     picks_closed: boolean
+    venue: string | null
 }
 
 interface UserPick {
@@ -198,6 +200,13 @@ export default function PickScreen({ route, navigation }: any) {
                 </View>
                 <Text style={styles.dateText}>{formatDateTime(match.match_date)}</Text>
 
+                {match.venue && (
+                    <View style={styles.venueRow}>
+                        <Ionicons name="location-outline" size={13} color={colors.textSecondary} />
+                        <Text style={styles.venueText}>{match.venue}</Text>
+                    </View>
+                )}
+
                 {isClosed && (
                     <View style={styles.closedBanner}>
                         <Text style={styles.closedBannerText}>
@@ -350,6 +359,17 @@ const styles = StyleSheet.create({
         textAlign: "center",
         marginTop: 12,
         textTransform: "capitalize",
+    },
+    venueRow: {
+        flexDirection: "row",
+        justifyContent: "center",
+        alignItems: "center",
+        marginTop: 6,
+        gap: 4,
+    },
+    venueText: {
+        color: colors.textSecondary,
+        fontSize: 12,
     },
     closedBanner: {
         backgroundColor: colors.border,

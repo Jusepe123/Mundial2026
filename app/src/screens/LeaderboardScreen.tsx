@@ -62,6 +62,7 @@ interface Match {
     status: string
     stage: string
     match_date: string
+    venue: string | null
 }
 
 function PositionBadge({ position }: { position: number }) {

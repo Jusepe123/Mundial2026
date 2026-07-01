@@ -23,6 +23,7 @@ interface Match {
     away_penalties: number | null
     status: string
     stage: string
+    venue: string | null
 }
 
 interface PickData {
@@ -99,6 +100,11 @@ export default function MatchPicksTable({ match, picks, players, currentPlayerId
                     </View>
                 </View>
                 <Text style={styles.stage}>{stageLabel}</Text>
+                {match.venue && (
+                    <View style={styles.venueRow}>
+                        <Text style={styles.venueText}>{match.venue}</Text>
+                    </View>
+                )}
                 {match.status === "live" && (
                     <View style={styles.liveBadge}>
                         <View style={styles.liveDot} />
@@ -203,6 +209,15 @@ const styles = StyleSheet.create({
         textTransform: "uppercase",
         letterSpacing: 1,
         marginTop: 10,
+    },
+    venueRow: {
+        alignItems: "center",
+        marginTop: 4,
+    },
+    venueText: {
+        color: colors.textSecondary,
+        fontSize: 10,
+        textAlign: "center",
     },
     liveBadge: {
         alignSelf: "center",
