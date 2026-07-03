@@ -17,6 +17,7 @@ import supabase from "../lib/supabase"
 import getDeviceId from "../lib/deviceId"
 import usePlayerStore from "../store/usePlayerStore"
 import TeamCrest from "../components/TeamCrest"
+import { TEAMS } from "../lib/teams"
 import { colors } from "../theme/colors"
 
 interface ScoringConfig {
@@ -30,27 +31,14 @@ interface SpecialPick {
     prediction: string
 }
 
-const TEAMS = [
-    { group: "A", teams: ["Mexico", "South Korea", "Czech Republic", "South Africa"] },
-    { group: "B", teams: ["Canada", "Switzerland", "Qatar", "Bosnia and Herzegovina"] },
-    { group: "C", teams: ["Brazil", "Morocco", "Scotland", "Haiti"] },
-    { group: "D", teams: ["United States", "Australia", "Turkey", "Paraguay"] },
-    { group: "E", teams: ["Germany", "Curaçao", "Ivory Coast", "Ecuador"] },
-    { group: "F", teams: ["Netherlands", "Japan", "Tunisia", "Sweden"] },
-    { group: "G", teams: ["Belgium", "Egypt", "Iran", "New Zealand"] },
-    { group: "H", teams: ["Spain", "Cape Verde", "Saudi Arabia", "Uruguay"] },
-    { group: "I", teams: ["France", "Senegal", "Norway", "Iraq"] },
-    { group: "J", teams: ["Argentina", "Algeria", "Austria", "Jordan"] },
-    { group: "K", teams: ["Portugal", "Uzbekistan", "Colombia", "DR Congo"] },
-    { group: "L", teams: ["England", "Croatia", "Ghana", "Panama"] },
-]
-
+// "surprise" (Selección sorpresa) isn't listed here — it's voted through
+// SurpriseSurveyModal, a one-question popup that opens dynamically around
+// the final match instead of this screen's static pre-tournament deadline.
 const CATEGORIES = [
     { category: "first", label: "Campeón", pointsKey: "special_first" },
     { category: "second", label: "Subcampeón", pointsKey: "special_second" },
     { category: "third", label: "Tercer lugar", pointsKey: "special_third" },
     { category: "fourth", label: "Cuarto lugar", pointsKey: "special_fourth" },
-    { category: "surprise", label: "Selección sorpresa", pointsKey: "special_surprise" },
     { category: "top_scorer", label: "Goleador", pointsKey: "special_scorer" },
 ]
 

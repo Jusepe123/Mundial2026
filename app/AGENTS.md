@@ -1,5 +1,5 @@
 # Mundial 2026 — Documentación del Proyecto
-> Última actualización: 02-jul-2026
+> Última actualización: 03-jul-2026
 
 ## Stack Tecnológico
 
@@ -28,25 +28,27 @@ mundial-2026/
 │   │   │   ├── supabase.ts        # Cliente Supabase con SecureStore adapter
 │   │   │   ├── deviceId.ts        # Genera/persiste UUID único del dispositivo
 │   │   │   ├── flags.ts           # Mapa de 66 códigos de país, getFlagUrl/getAltFlagUrl, prefetchFlags con concurrencia 4
-│   │   │   └── jersey-colors.ts   # Colores de camiseta para los 48 equipos + patrones SVG
+│   │   │   ├── jersey-colors.ts   # Colores de camiseta para los 48 equipos + patrones SVG
+│   │   │   └── teams.ts           # Lista de 48 equipos por grupo (compartida por SpecialPicksScreen y SurpriseSurveyModal)
 │   │   ├── store/
 │   │   │   └── usePlayerStore.ts  # Zustand: player, isLoading, setPlayer, clearPlayer, hydrate
 │   │   ├── components/
 │   │   │   ├── TeamCrest.tsx      # Círculo con bandera: crest → flagcdn/flagsapi → alt CDN → inicial
 │   │   │   ├── MatchPicksTable.tsx # Tabla de pronósticos de todos los jugadores por partido
 │   │   │   ├── BracketView.tsx    # Llaves knockout: columnas 16avos→Final con conectores, scroll horizontal
-│   │   │   └── PlayerFigure.tsx   # SVG de jugador con camiseta (color/patrón) + número
+│   │   │   ├── PlayerFigure.tsx   # SVG de jugador con camiseta (color/patrón) + número
+│   │   │   └── SurpriseSurveyModal.tsx # Popup "Selección sorpresa": se muestra sola durante la ventana de voto, montada globalmente
 │   │   ├── navigation/
-│   │   │   └── AppNavigator.tsx   # Navegación + Splash + prefetchFlags tras hydrate
+│   │   │   └── AppNavigator.tsx   # Navegación + Splash + prefetchFlags tras hydrate + SurpriseSurveyModal montado a nivel de app
 │   │   └── screens/
 │   │       ├── WelcomeScreen.tsx  # Login/registro con username + device_id
 │   │       ├── MatchListScreen.tsx# Partidos con segmentos, Realtime, sync-matches una vez al montar
 │   │       ├── PickScreen.tsx     # Pronóstico por partido, invalida userPicks al guardar
 │   │       ├── GroupsScreen.tsx   # Segmentos "Llaves" (BracketView, default) / "Grupos" (tabla posiciones)
-│   │       ├── SpecialPicksScreen.tsx # 6 categorías especiales
+│   │       ├── SpecialPicksScreen.tsx # 5 categorías especiales (sin "surprise", ver SurpriseSurveyModal)
 │   │       ├── TopScorersScreen.tsx   # Goleadores + equipos más goleadores
 │   │       ├── MatchDetailScreen.tsx  # Detalle de partido individual
-│   │       └── LeaderboardScreen.tsx  # Ranking + estadísticas + partido en vivo
+│   │       └── LeaderboardScreen.tsx  # Ranking + estadísticas + partido en vivo + podio final
 │   └── package.json
 └── supabase/
     ├── seed.sql
@@ -61,10 +63,14 @@ mundial-2026/
     │   ├── 009_scorers_shirt_number.sql
     │   ├── 010_round_of_32_and_new_scoring.sql
     │   ├── 011_penalty_columns.sql
-    │   └── 20260614070205_fix_team_name_aliases.sql
+    │   ├── 012_venue_column.sql
+    │   ├── 20260614070205_fix_team_name_aliases.sql
+    │   ├── 20260701000000_group_standings_gd_tiebreak.sql
+    │   └── 20260703180740_special_scoring_and_survey.sql
     └── functions/
         ├── sync-matches/index.ts
-        └── calculate-points/index.ts
+        ├── calculate-points/index.ts
+        └── calculate-special-points/index.ts
 ```
 
 ## Arquitectura de Navegación
@@ -123,10 +129,26 @@ RootStack (sin header)
 
 ## Manejo de Penales
 - **DB**: `home_penalties INT`, `away_penalties INT` en matches (migración 011).
-- **sync-matches**: lee `score.penalties` de la API y los persiste. La API de football-data.org incluye los goles de penales en `score.fullTime`. Cuando hay penales y el fullTime muestra un ganador, se resta el score de penales del fullTime para obtener el score reglamentario real.
+- **sync-matches**: `getRegulationScores()` usa el campo `score.regularTime` de la API (presente en cualquier partido que pasó de 90 min) como fuente de verdad del score reglamentario, en vez de restar los penales del `fullTime` — ese cálculo por resta solo se usa como fallback si `regularTime` no viene en la respuesta. `getPenaltyScores()` deriva el score de penales como `fullTime - regularTime` en vez de confiar en el campo `score.penalties` de la API directamente, porque ese campo puede ser internamente inconsistente con `fullTime`/`regularTime` (caso real 03-jul-2026, Australia vs Egipto: la API reportó `penalties: {home:4, away:4}`, un empate imposible en una definición por penales, mientras `fullTime` {3,5} y `regularTime` {1,1} implicaban que el score real de penales era 2-4). Este bug producía scores reglamentarios absurdos (ej. `home_score: -1`) y puntos mal calculados.
 - **calculate-points**: si hay penales, el ganador real es quien gana los penales. Exacts se compara contra score reglamentario. Ganador se compara contra el verdadero ganador. `actualDraw` se basa en `home_score === away_score` (score reglamentario), no en los penales.
 - **UI**: score reglamentario en verde (`colors.accent`) y penales en gris (`textSecondary`) debajo. En PickScreen el score final también usa `colors.accent`.
 - El usuario pronostica solo el score reglamentario (sin cambios en PickScreen).
+
+## Cierre de Torneo
+- **`matches.finished_at`** (migración `20260703180740`): timestamp que se setea una sola vez, en `sync-matches`, cuando un partido pasa a `status='finished'` (`becomingFinished = oldData?.status !== 'finished' && status === 'finished'`). Solo importa para el partido `stage='final'`: ancla tanto la ventana de voto de "Selección sorpresa" como el disparador de puntos especiales automáticos. Hay un índice único parcial (`matches_one_final_idx`) que garantiza que solo puede existir una fila con `stage='final'`.
+- **Selección sorpresa (encuesta post-final)**:
+  - Ya no se vota en `SpecialPicksScreen` (se sacó del array `CATEGORIES`). Se vota exclusivamente vía `SurpriseSurveyModal.tsx`, montado a nivel de app en `AppNavigator` (`MainNavigator`), visible sin importar en qué tab esté el usuario.
+  - Ventana de voto: abre en el kickoff del partido `final` (`match_date <= now()`), cierra 30 min después de que el partido termine (`finished_at + 30min`). Mientras el partido no haya terminado, la ventana queda abierta indefinidamente (no tiene límite superior hasta que termine).
+  - El popup se muestra solo si el jugador no tiene ya un `special_picks` con `category='surprise'`. Es descartable ("Luego") pero reaparece en la próxima apertura de la app si sigue sin votar y la ventana sigue abierta; una vez que vota, desaparece para siempre (no hay tabla de "ya visto", se infiere de la existencia del pick).
+  - Validación server-side en `upsert_special_pick` (RPC, migración `20260703180740`): rechaza la escritura si `category='surprise'` y la ventana está cerrada (el chequeo del cliente no alcanza, mismo motivo que `picks_closed` en `upsert_pick`).
+  - **`surprise` NO se puntúa automáticamente** — a diferencia de las otras 5 categorías, no tiene una respuesta objetivamente correcta, se sigue calificando a mano desde el dashboard (mismo patrón que `scoring_config`).
+- **Puntos especiales automáticos** (`calculate-special-points`, nueva edge function): puntúa `first`/`second`/`third`/`fourth`/`top_scorer` automáticamente. Se dispara desde `sync-matches` en cada corrida del cron, pero solo actúa 30 min después de que el `final` termina (mismo cierre que la ventana de sorpresa) — antes de eso responde `{processed:0, skipped:...}` sin hacer nada. Idempotente: solo escribe `points_earned` cuando el valor calculado cambia respecto al guardado (evita UPDATEs no-op cada minuto para siempre, mismo criterio que `advanceTeam` en el bracket).
+  - `first`/`second`: ganador/perdedor del partido `final` (penales si corresponde, si no score reglamentario).
+  - `third`/`fourth`: ganador/perdedor del partido `third_place`.
+  - `top_scorer`: se compara contra el/los goleador(es) con más goles en `scorers` (empates comparten los puntos). El pronóstico es texto libre (`Nombre/País`) — se hace *fuzzy match* del nombre contra `scorers.player_name` normalizando acentos/mayúsculas y tolerando coincidencia parcial (`"Messi"` matchea `"Lionel Messi"`).
+  - Protegida con el mismo chequeo de `Authorization: Bearer <SERVICE_ROLE_KEY>` que `calculate-points` — solo `sync-matches` puede invocarla.
+- **LeaderboardScreen**: el podio final (`showFinalPodium`) ya no se muestra apenas todos los partidos terminan — espera a que pase la ventana de 30 min post-final (`specialScoringDone`), para no mostrar un podio incompleto que después cambie al sumarse los puntos especiales. Mientras tanto muestra "🏆 Torneo finalizado — Calculando puntos especiales...". Un ticker de 30s fuerza el re-render para que la pantalla cambie sola al pasar el tiempo, sin depender de nueva data del server.
+- **No se agregaron dependencias npm**: la encuesta de sorpresa es un modal in-app (no hay push notifications reales — eso hubiera requerido `expo-notifications` + infraestructura de push tokens + rebuild nativo completo en vez de OTA, decisión confirmada con el usuario).
 
 ### Banderas (TeamCrest + flags.ts)
 - `prefetchFlags()` se llama tras hydrate, con concurrencia limitada a 4 conexiones
@@ -195,16 +217,16 @@ ListFooterComponent:
 | semi | 50 | 25 | 1 | — | — |
 | third_place | 30 | 15 | 1 | — | — |
 | final | 75 | 35 | 1 | — | — |
-| special_first | — | — | — | 50 | 2026-06-28T18:59Z |
-| special_second | — | — | — | 30 | 2026-06-28T18:59Z |
-| special_third | — | — | — | 20 | 2026-06-28T18:59Z |
-| special_fourth | — | — | — | 15 | 2026-06-28T18:59Z |
-| special_surprise | — | — | — | 25 | 2026-06-28T18:59Z |
-| special_scorer | — | — | — | 35 | 2026-06-28T18:59Z |
+| special_first | — | — | — | 50 | 2026-07-04T22:27Z |
+| special_second | — | — | — | 30 | 2026-07-04T22:27Z |
+| special_third | — | — | — | 20 | 2026-07-04T22:27Z |
+| special_fourth | — | — | — | 15 | 2026-07-04T22:27Z |
+| special_surprise | — | — | — | 25 | 2026-06-28T18:59Z (campo sin uso — ver "Cierre de Torneo" para la ventana real) |
+| special_scorer | — | — | — | 35 | 2026-07-04T22:27Z |
 
 ### RPC Functions (SECURITY DEFINER)
 - **upsert_pick**: verifica device_id + picks_closed (excepción si match cerrado o no existe), INSERT ON CONFLICT DO UPDATE
-- **upsert_special_pick**: verifica device_id, INSERT ON CONFLICT DO UPDATE
+- **upsert_special_pick**: verifica device_id, INSERT ON CONFLICT DO UPDATE. Para `category='surprise'` además verifica la ventana dinámica de voto (kickoff del `final` hasta `finished_at + 30min`), leyendo el partido `stage='final'` (hay como máximo una fila gracias a `matches_one_final_idx`).
 
 ## Edge Functions
 
@@ -217,6 +239,8 @@ ListFooterComponent:
 - **Bracket propagation**: Mapeo completo del torneo (ext_ids de API). Cuando un partido de knockout termina, avanza automáticamente el ganador al siguiente partido del bracket (y el perdedor de semifinal al 3er puesto). Usa `|| "Por definir"` (no `??`) para manejar strings vacíos de la API. **Además del propagation en el loop principal, hay un post-processing** que lee los partidos finished desde la DB y propaga ganadores usando `home_team`/`away_team` y `home_penalties`/`away_penalties` como datos fuente. El post-processing **compara contra el valor actual del slot destino antes de escribir** (`advanceTeam()`): antes escribía incondicionalmente en cada run, generando UPDATEs no-op cada 2 min que disparaban eventos Realtime a todos los clientes. `getMatchResult`/`getMatchResultFromDb` devuelven `{winner, loser}` en una sola función.
 - **Scorers gating**: el sync de goleadores + shirt numbers solo corre si hay algún partido live o finished hace <6h (los goles solo cambian en esas ventanas). Fuera de ellas se ahorran hasta 6 llamadas a football-data.org por run.
 - **Venue**: extrae `match.venue` de la API. Si es null, usa `VENUE_MAP` (diccionario hardcodeado con los 104 partidos según calendario oficial FIFA).
+- **`finished_at`**: se setea (una sola vez) cuando un partido pasa a `status='finished'` en este run. Ver "Cierre de Torneo".
+- **Trigger de `calculate-special-points`**: después del post-processing de bracket, chequea el partido `stage='final'`; si está finished y ya pasaron 30 min desde `finished_at`, invoca la función. Se puede llamar en cada corrida del cron sin problema (ver "Cierre de Torneo" — es idempotente).
 - **Cron job** (`pg_cron` + `pg_net`): `net.http_post` cada 2 min a sync-matches para sync incluso sin frontend abierto. Es la única fuente de sync periódico — el frontend ya no hace polling propio (ver Data fetching reducido), solo invoca sync-matches una vez al abrir MatchListScreen y en pull-to-refresh.
 
 ### calculate-points
@@ -224,6 +248,10 @@ ListFooterComponent:
 - **Penales**: si `home_penalties` y `away_penalties` no son null, el ganador real es quien ganó los penales (no el score reglamentario). Exacto se compara contra score reglamentario; ganador se compara contra el verdadero ganador (penales si existen, reglamentario si no).
 - Recalcula `players.total_points` como suma de `picks.points_earned` + `special_picks.points_earned` (Promise.all paralelo)
 - **Autorización**: solo acepta invocaciones con `Authorization: Bearer <SERVICE_ROLE_KEY>` (rechaza con 403 cualquier otro caller, incluido el anon key). Antes cualquiera con el anon key podía forzar un recálculo de puntos para cualquier `match_id`.
+
+### calculate-special-points
+- Puntúa automáticamente `first`/`second`/`third`/`fourth`/`top_scorer` de `special_picks` cuando el torneo termina. Ver "Cierre de Torneo" para el detalle completo de la lógica y el gating temporal.
+- Misma protección de autorización que `calculate-points` (solo `SERVICE_ROLE_KEY`).
 
 ## Flujo de Autenticación
 
@@ -270,6 +298,9 @@ ListFooterComponent:
 | 02-jul | — | 🚀 OTA | **UI: Llaves + polish de MatchList**. (1) `BracketView.tsx`: bracket knockout completo (16avos→Final + 3er puesto) con scroll horizontal, conectores tipo llave, ganador en accent, punto rojo live, tap→MatchDetail/Pick, auto-scroll a la ronda activa; los ext_ids por ronda están ordenados bracket-adjacent (match j alimentado por 2j y 2j+1). GroupsScreen ganó segmentos "Llaves" (default) / "Grupos". (2) MatchListScreen: countdown "⏱ en Xh Ym" (partidos a <6h, tick 30s) y badge de resultado del pronóstico en Finalizados (🎯 Exacto / ✓ Ganador / ✗ Fallaste, replica la lógica de calculate-points incluyendo penales). |
 | 02-jul | — | 🚀 OTA + Edge Function + DB | **Fix "score fantasma"** (app mostraba 2-2 en Portugal 2-1 Croatia tras gol anulado por offside): la DB se auto-corregía pero la app nunca refetcheaba — eventos Realtime perdidos en background se pierden para siempre. App: `focusManager`+`refetchOnWindowFocus:true`, invalidate en cada `SUBSCRIBED` del canal, polling condicional de matches (30s live / 60s a <2h). Edge function: skip de knockouts finished sin cambios (usando `getRegulationScores()` compartido), `advanceTeam()` compara antes de escribir (elimina UPDATEs no-op cada 2 min), scorers sync gateado a ventanas de partido (<6h). |
 | 01-jul | — | ✅ OTA + Edge Function + DB | **Fixes de revisión de código** (excepto auth device_id, fuera de alcance por ahora — 10 jugadores, riesgo bajo): (1) `group_standings_view` ahora ordena por goal_difference antes que goals_scored (tiebreak FIFA correcto), migración `20260701000000_group_standings_gd_tiebreak.sql`. (2) LeaderboardScreen ordena `leaderboard` explícitamente por `total_points` (antes dependía del ORDER BY interno de la vista, no garantizado). (3) `calculate-points` ahora rechaza cualquier caller que no sea el service role key. (4) sync-matches: colapsadas las 4 funciones getWinner/getLoser/getWinnerFromDb/getLoserFromDb en `getMatchResult`/`getMatchResultFromDb`. (5) MatchListScreen: eliminado el polling de `sync-matches` cada 30s/120s por dispositivo (redundante con el pg_cron cada 2 min, riesgo de rate limit en football-data.org con varios dispositivos abiertos a la vez); ahora solo sincroniza una vez al montar. (6) AppNavigator: los 5 listeners de doble-tap idénticos se unificaron en `makeDoubleTapListeners`. |
+| 03-jul | — | ✅ Edge Function | **Fix penales fantasma** (Australia 1-1 Egipto → penales, la app calculaba `home_score: -1`): `getRegulationScores()` ahora prioriza `score.regularTime` de la API en vez de restar penales del `fullTime`; `getPenaltyScores()` deriva el score de penales como `fullTime - regularTime` en vez de confiar en el campo `score.penalties` (que venía inconsistente para ese partido: reportaba 4-4, un empate imposible). Verificado contra la API real y recalculado en producción: 1-1 / penales 2-4, puntos de los jugadores corregidos. |
+| 03-jul | — | 🚀 OTA + Edge Function + DB | **Cierre de Torneo**: puntos especiales automáticos + podio final + encuesta "Selección sorpresa" post-final. Ver sección "Cierre de Torneo" para el detalle completo. Nueva migración `20260703180740` (`matches.finished_at`, índice único de "final", ventana de voto server-side en `upsert_special_pick`), nueva edge function `calculate-special-points`, `SurpriseSurveyModal.tsx` nuevo (montado en AppNavigator), `SpecialPicksScreen` pierde la categoría "surprise", `LeaderboardScreen` gatea el podio final a 30 min post-final. Sin dependencias npm nuevas (notificación in-app, no push nativo — decisión confirmada con el usuario para evitar rebuild nativo). |
+| 03-jul | — | ✅ DB | **Extensión de deadline de especiales**: `scoring_config.deadline` de `special_first`/`second`/`third`/`fourth`/`scorer` extendido 24h desde el momento de la corrida (nueva fecha: 04-jul ~22:27Z), migración `20260703182701_extend_special_picks_deadline.sql`. `special_surprise` no se tocó (ya no usa este campo, ver "Cierre de Torneo"). |
 
 ## Reglas para el Agente
 

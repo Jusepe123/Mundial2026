@@ -16,6 +16,7 @@ import SpecialPicksScreen from "../screens/SpecialPicksScreen"
 import LeaderboardScreen from "../screens/LeaderboardScreen"
 import TopScorersScreen from "../screens/TopScorersScreen"
 import GroupsScreen from "../screens/GroupsScreen"
+import SurpriseSurveyModal from "../components/SurpriseSurveyModal"
 import usePlayerStore from "../store/usePlayerStore"
 import { prefetchFlags } from "../lib/flags"
 
@@ -144,6 +145,7 @@ function MainNavigator() {
                     queryClient.invalidateQueries({ queryKey: ["matches"] })
                     queryClient.invalidateQueries({ queryKey: ["currentMatch"] })
                     queryClient.invalidateQueries({ queryKey: ["scorers"] })
+                    queryClient.invalidateQueries({ queryKey: ["finalMatchWindow"] })
                 }
             )
             // SUBSCRIBED fires on the initial join and on every rejoin after a
@@ -189,63 +191,66 @@ function MainNavigator() {
     }, [player?.id])
 
     return (
-        <Tab.Navigator
-            screenOptions={({ route }) => ({
-                tabBarIcon: ({ focused, color, size }) => {
-                    const icons = tabIcons[route.name]
-                    const iconName = focused ? icons.focused : icons.unfocused
-                    return <Ionicons name={iconName} size={size} color={color} />
-                },
-                tabBarStyle: {
-                    backgroundColor: colors.background,
-                    borderTopColor: colors.border,
-                    borderTopWidth: 1,
-                    height: 60 + insets.bottom,
-                    paddingBottom: 8 + insets.bottom,
-                    paddingTop: 4,
-                    elevation: 0,
-                    shadowOpacity: 0,
-                },
-                tabBarActiveTintColor: colors.accent,
-                tabBarInactiveTintColor: colors.textSecondary,
-                headerShown: false,
-                tabBarLabelStyle: {
-                    fontSize: 11,
-                    fontWeight: "600",
-                },
-            })}
-        >
-            <Tab.Screen
-                name="Partidos"
-                component={MatchesNavigator}
-                options={{ tabBarLabel: "Partidos" }}
-                listeners={makeDoubleTapListeners}
-            />
-            <Tab.Screen
-                name="Goleadores"
-                component={TopScorersScreen}
-                options={{ tabBarLabel: "Goleadores" }}
-                listeners={makeDoubleTapListeners}
-            />
-            <Tab.Screen
-                name="Grupos"
-                component={GroupsScreen}
-                options={{ tabBarLabel: "Grupos" }}
-                listeners={makeDoubleTapListeners}
-            />
-            <Tab.Screen
-                name="Especiales"
-                component={SpecialNavigator}
-                options={{ tabBarLabel: "Especiales" }}
-                listeners={makeDoubleTapListeners}
-            />
-            <Tab.Screen
-                name="Ranking"
-                component={RankingNavigator}
-                options={{ tabBarLabel: "Ranking" }}
-                listeners={makeDoubleTapListeners}
-            />
-        </Tab.Navigator>
+        <>
+            <Tab.Navigator
+                screenOptions={({ route }) => ({
+                    tabBarIcon: ({ focused, color, size }) => {
+                        const icons = tabIcons[route.name]
+                        const iconName = focused ? icons.focused : icons.unfocused
+                        return <Ionicons name={iconName} size={size} color={color} />
+                    },
+                    tabBarStyle: {
+                        backgroundColor: colors.background,
+                        borderTopColor: colors.border,
+                        borderTopWidth: 1,
+                        height: 60 + insets.bottom,
+                        paddingBottom: 8 + insets.bottom,
+                        paddingTop: 4,
+                        elevation: 0,
+                        shadowOpacity: 0,
+                    },
+                    tabBarActiveTintColor: colors.accent,
+                    tabBarInactiveTintColor: colors.textSecondary,
+                    headerShown: false,
+                    tabBarLabelStyle: {
+                        fontSize: 11,
+                        fontWeight: "600",
+                    },
+                })}
+            >
+                <Tab.Screen
+                    name="Partidos"
+                    component={MatchesNavigator}
+                    options={{ tabBarLabel: "Partidos" }}
+                    listeners={makeDoubleTapListeners}
+                />
+                <Tab.Screen
+                    name="Goleadores"
+                    component={TopScorersScreen}
+                    options={{ tabBarLabel: "Goleadores" }}
+                    listeners={makeDoubleTapListeners}
+                />
+                <Tab.Screen
+                    name="Grupos"
+                    component={GroupsScreen}
+                    options={{ tabBarLabel: "Grupos" }}
+                    listeners={makeDoubleTapListeners}
+                />
+                <Tab.Screen
+                    name="Especiales"
+                    component={SpecialNavigator}
+                    options={{ tabBarLabel: "Especiales" }}
+                    listeners={makeDoubleTapListeners}
+                />
+                <Tab.Screen
+                    name="Ranking"
+                    component={RankingNavigator}
+                    options={{ tabBarLabel: "Ranking" }}
+                    listeners={makeDoubleTapListeners}
+                />
+            </Tab.Navigator>
+            <SurpriseSurveyModal />
+        </>
     )
 }
 

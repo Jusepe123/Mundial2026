@@ -318,6 +318,12 @@ export default function LeaderboardScreen() {
     const [modalLoading, setModalLoading] = useState(false)
     const [ownStats, setOwnStats] = useState<PlayerStats | null>(null)
     const [refreshing, setRefreshing] = useState(false)
+    const [now, setNow] = useState(() => Date.now())
+
+    useEffect(() => {
+        const id = setInterval(() => setNow(Date.now()), 30_000)
+        return () => clearInterval(id)
+    }, [])
 
     const { data: leaderboard, isLoading } = useQuery({
         queryKey: ["leaderboard"],
@@ -355,6 +361,20 @@ export default function LeaderboardScreen() {
             return { total, finished, pending }
         },
         staleTime: 30_000,
+    })
+
+    const { data: finalMatch } = useQuery({
+        queryKey: ["finalMatchWindow"],
+        queryFn: async () => {
+            const { data } = await supabase
+                .from("matches")
+                .select("status, finished_at")
+                .eq("stage", "final")
+                .maybeSingle()
+            return data as { status: string; finished_at: string | null } | null
+        },
+        staleTime: 30_000,
+        refetchInterval: 60_000,
     })
 
     const { data: currentMatches } = useQuery({
@@ -439,6 +459,7 @@ export default function LeaderboardScreen() {
             await queryClient.invalidateQueries({ queryKey: ["currentMatch"] })
             await queryClient.invalidateQueries({ queryKey: ["matchStats"] })
             await queryClient.invalidateQueries({ queryKey: ["currentPicks"] })
+            await queryClient.invalidateQueries({ queryKey: ["finalMatchWindow"] })
             if (player?.id) {
                 const stats = await fetchPlayerStats(player.id)
                 setOwnStats(stats)
@@ -449,6 +470,17 @@ export default function LeaderboardScreen() {
     }, [player?.id])
 
     const isTournamentOver = matchStats?.pending === 0 && matchStats?.total > 0
+
+    // Special points (podium + top scorer) only land 30 minutes after the
+    // final match ends — that's also the "Selección sorpresa" voting
+    // deadline. Don't reveal the final podium before then, or it'd be
+    // missing points and could flip once they're added.
+    const specialScoringDone = useMemo(() => {
+        if (!finalMatch || finalMatch.status !== "finished" || !finalMatch.finished_at) return false
+        return now >= new Date(finalMatch.finished_at).getTime() + 30 * 60 * 1000
+    }, [finalMatch, now])
+
+    const showFinalPodium = isTournamentOver && specialScoringDone
 
     const podium = useMemo(() => {
         if (!leaderboard || leaderboard.length === 0) return null
@@ -551,7 +583,16 @@ export default function LeaderboardScreen() {
                     <>
                         <Text style={styles.title}>Ranking</Text>
 
-                        {isTournamentOver && podium && (
+                        {isTournamentOver && !specialScoringDone && (
+                            <View style={styles.podiumSection}>
+                                <Text style={styles.podiumTitle}>🏆 Torneo finalizado</Text>
+                                <Text style={styles.podiumPending}>
+                                    Calculando puntos especiales...
+                                </Text>
+                            </View>
+                        )}
+
+                        {showFinalPodium && podium && (
                             <View style={styles.podiumSection}>
                                 <Text style={styles.podiumTitle}>🏆 Torneo finalizado</Text>
                                 <View style={styles.podiumRow}>
@@ -574,7 +615,7 @@ export default function LeaderboardScreen() {
                             </View>
                         )}
 
-                        {(isTournamentOver && podium) && <View style={styles.sectionDivider} />}
+                        {isTournamentOver && <View style={styles.sectionDivider} />}
 
                         <View style={styles.headerStatsRow}>
                             <View style={styles.statCard}>
@@ -812,6 +853,11 @@ const styles = StyleSheet.create({
         fontWeight: "bold",
         color: colors.accent,
         marginBottom: 16,
+    },
+    podiumPending: {
+        fontSize: 14,
+        color: colors.textSecondary,
+        fontStyle: "italic",
     },
     podiumRow: {
         flexDirection: "row",

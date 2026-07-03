@@ -17,6 +17,7 @@ interface Match {
     status: string;
     picks_closed: boolean;
     venue: string | null;
+    finished_at: string | null;
 }
 
 interface BracketSlot {
@@ -212,10 +213,17 @@ interface MatchResult {
     loser: string | null;
 }
 
-// API workaround: when a match goes to penalties, football-data.org includes
-// penalty goals in score.fullTime. Subtract them to get the real regulation
-// (90+ET) score.
+// Regulation (90+ET) score. football-data.org exposes this directly as
+// `score.regularTime` for any match that went past 90 minutes (extra time
+// and/or penalties); that field is absent for regular matches. Prefer it
+// over deriving from fullTime, since fullTime/penalties can be internally
+// inconsistent (see getPenaltyScores below). Only fall back to the old
+// subtraction for API responses that lack regularTime entirely.
 function getRegulationScores(match: any): { home: number | null; away: number | null } {
+    const reg = match.score.regularTime;
+    if (reg && reg.home !== null && reg.away !== null) {
+        return { home: reg.home, away: reg.away };
+    }
     let home = match.score.fullTime.home;
     let away = match.score.fullTime.away;
     const penHome = match.score.penalties?.home ?? null;
@@ -225,6 +233,26 @@ function getRegulationScores(match: any): { home: number | null; away: number | 
         away = away - penAway;
     }
     return { home, away };
+}
+
+// Penalty shootout score. football-data.org's `score.penalties` field can be
+// internally inconsistent with fullTime/regularTime — seen 2026-07-03,
+// Australia vs Egypt: API reported `penalties: {home:4, away:4}` (a tie,
+// which a shootout can never end on) while fullTime {3,5} and regularTime
+// {1,1} implied the real shootout score was 2-4. Derive from
+// fullTime - regularTime instead, which is self-consistent by construction.
+function getPenaltyScores(match: any): { home: number | null; away: number | null } {
+    const rawHome = match.score.penalties?.home ?? null;
+    const rawAway = match.score.penalties?.away ?? null;
+    if (rawHome === null || rawAway === null) return { home: null, away: null };
+
+    const reg = getRegulationScores(match);
+    const fullHome = match.score.fullTime.home;
+    const fullAway = match.score.fullTime.away;
+    if (reg.home !== null && reg.away !== null && fullHome !== null && fullAway !== null) {
+        return { home: fullHome - reg.home, away: fullAway - reg.away };
+    }
+    return { home: rawHome, away: rawAway };
 }
 
 // Winner/loser are decided by penalties when present, otherwise by fullTime score.
@@ -237,8 +265,9 @@ function getMatchResult(match: any): MatchResult {
     const homeName = alias(match.homeTeam.name);
     const awayName = alias(match.awayTeam.name);
 
-    if (match.score.penalties?.home != null && match.score.penalties?.away != null) {
-        return match.score.penalties.home > match.score.penalties.away
+    const pen = getPenaltyScores(match);
+    if (pen.home != null && pen.away != null) {
+        return pen.home > pen.away
             ? { winner: homeName, loser: awayName }
             : { winner: awayName, loser: homeName };
     }
@@ -338,12 +367,13 @@ Deno.serve(async (req) => {
                 // step that reads finished matches from the DB, so unchanged finished
                 // knockout matches don't need to be re-upserted every run.)
                 const reg = getRegulationScores(match);
+                const pen = getPenaltyScores(match);
                 const homeName = TEAM_ALIASES[match.homeTeam.name] ?? (match.homeTeam.name || "Por definir");
                 const awayName = TEAM_ALIASES[match.awayTeam.name] ?? (match.awayTeam.name || "Por definir");
                 if (dbData.home_score === reg.home &&
                     dbData.away_score === reg.away &&
-                    dbData.home_penalties === (match.score.penalties?.home ?? null) &&
-                    dbData.away_penalties === (match.score.penalties?.away ?? null) &&
+                    dbData.home_penalties === pen.home &&
+                    dbData.away_penalties === pen.away &&
                     dbData.home_team === homeName &&
                     dbData.away_team === awayName) {
                     return false;
@@ -426,8 +456,15 @@ Deno.serve(async (req) => {
                 const rawAway = match.awayTeam.name || "Por definir";
 
                 const { home: homeScore, away: awayScore } = getRegulationScores(match);
-                const rawHomePenalties = match.score.penalties?.home ?? null;
-                const rawAwayPenalties = match.score.penalties?.away ?? null;
+                const { home: rawHomePenalties, away: rawAwayPenalties } = getPenaltyScores(match);
+
+                // Lookup old data from map (O(1), no individual SELECT)
+                const oldData = dbMatchMap.get(match.id);
+                // The "Selección sorpresa" voting window and the automatic
+                // special-points trigger are both anchored to the final
+                // match's finish time, so it must be recorded once, the
+                // first time this match is observed as finished.
+                const becomingFinished = oldData?.status !== 'finished' && status === 'finished';
 
                 const newMatchData: Partial<Match> = {
                     external_id: match.id,
@@ -444,10 +481,8 @@ Deno.serve(async (req) => {
                     status: status,
                     picks_closed: picksClosed,
                     venue: match.venue ?? VENUE_MAP[match.id] ?? null,
+                    ...(becomingFinished ? { finished_at: new Date().toISOString() } : {}),
                 };
-
-                // Lookup old data from map (O(1), no individual SELECT)
-                const oldData = dbMatchMap.get(match.id);
 
                 // 2. Upsert into Supabase
                 const { data: upsertedMatch, error: upsertError } = await supabase
@@ -623,6 +658,45 @@ Deno.serve(async (req) => {
         errors.push(`Post-bracket propagation error: ${bracketError.message}`);
     }
 
+    // 4c. Trigger calculate-special-points once the final match's 30-minute
+    // "Selección sorpresa" grace period has elapsed. Safe to call every run:
+    // the function itself checks the window and no-ops (200) if it's not
+    // time yet, and only writes rows whose points actually changed.
+    let specialPointsProcessed = 0;
+    try {
+        const { data: finalMatch } = await supabase
+            .from('matches')
+            .select('status, finished_at')
+            .eq('stage', 'final')
+            .maybeSingle();
+
+        if (finalMatch?.status === 'finished' && finalMatch.finished_at) {
+            const closesAt = new Date(finalMatch.finished_at).getTime() + 30 * 60 * 1000;
+            if (Date.now() >= closesAt) {
+                const specialPointsUrl = `${SUPABASE_URL}/functions/v1/calculate-special-points`;
+                const specialPointsResponse = await fetch(specialPointsUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${SERVICE_ROLE_KEY}`,
+                    },
+                });
+
+                if (!specialPointsResponse.ok) {
+                    const errorText = await specialPointsResponse.text();
+                    console.error(`Error triggering calculate-special-points:`, errorText);
+                    errors.push(`Error triggering calculate-special-points: ${errorText}`);
+                } else {
+                    const result = await specialPointsResponse.json();
+                    specialPointsProcessed = result.processed ?? 0;
+                }
+            }
+        }
+    } catch (specialError: any) {
+        console.error("Error triggering calculate-special-points:", specialError);
+        errors.push(`Error triggering calculate-special-points: ${specialError.message}`);
+    }
+
     // 5. Sync top scorers from football-data.org (only around match windows)
     if (scorersRelevant) try {
         const scorersResponse = await fetch("https://api.football-data.org/v4/competitions/WC/scorers", {
@@ -711,6 +785,7 @@ Deno.serve(async (req) => {
             synced: syncedMatchesCount,
             finished_triggered: finishedTriggeredCount,
             advanced: advancedCount,
+            special_points_processed: specialPointsProcessed,
             synced_scorers: syncedScorersCount,
             synced_shirt_numbers: syncedShirtNumbers,
             errors: errors,
