@@ -140,6 +140,41 @@ function formatTimeShort(dateStr: string): string {
     return time
 }
 
+const COUNTDOWN_WINDOW_MS = 6 * 60 * 60 * 1000
+
+function formatCountdown(ms: number): string {
+    const totalMin = Math.max(1, Math.round(ms / 60_000))
+    const h = Math.floor(totalMin / 60)
+    const m = totalMin % 60
+    return h > 0 ? `⏱ en ${h}h ${String(m).padStart(2, "0")}m` : `⏱ en ${m} min`
+}
+
+// Mirrors the calculate-points edge function: exact compares the regulation
+// score; winner uses penalties when the match had a shootout; a predicted draw
+// counts as "winner" when regulation ended level (even if penalties followed).
+function getPickOutcome(m: Match, pick: UserPick): "exact" | "winner" | "miss" {
+    if (m.home_score === null || m.away_score === null) return "miss"
+    if (pick.predicted_home === m.home_score && pick.predicted_away === m.away_score) return "exact"
+    const hasPens = m.home_penalties != null && m.away_penalties != null
+    const homeWins = hasPens ? m.home_penalties! > m.away_penalties! : m.home_score > m.away_score
+    const awayWins = hasPens ? m.away_penalties! > m.home_penalties! : m.away_score > m.home_score
+    const draw = m.home_score === m.away_score
+    if (
+        (pick.predicted_home > pick.predicted_away && homeWins) ||
+        (pick.predicted_home < pick.predicted_away && awayWins) ||
+        (pick.predicted_home === pick.predicted_away && draw)
+    ) {
+        return "winner"
+    }
+    return "miss"
+}
+
+const OUTCOME_LABELS = {
+    exact: "🎯 Exacto",
+    winner: "✓ Ganador",
+    miss: "✗ Fallaste",
+} as const
+
 export default function MatchListScreen() {
     const navigation = useNavigation<any>()
     const queryClient = useQueryClient()
@@ -147,6 +182,13 @@ export default function MatchListScreen() {
     const [segment, setSegment] = useState<"live" | "finished">("live")
     const [refreshing, setRefreshing] = useState(false)
     const [searchText, setSearchText] = useState("")
+    const [now, setNow] = useState(Date.now())
+
+    // Keeps the "empieza en Xh Ym" countdowns ticking.
+    useEffect(() => {
+        const timer = setInterval(() => setNow(Date.now()), 30_000)
+        return () => clearInterval(timer)
+    }, [])
 
     const { data: matches, isLoading } = useQuery({
         queryKey: ["matches"],
@@ -156,6 +198,19 @@ export default function MatchListScreen() {
                 .select("*")
                 .order("match_date", { ascending: true })
             return (data ?? []) as Match[]
+        },
+        // Safety net for when Realtime silently drops: poll the Supabase DB
+        // (cheap, no football-data.org call) while a match is live or imminent.
+        refetchInterval: (query) => {
+            const data = query.state.data as Match[] | undefined
+            if (!data) return false
+            if (data.some((m) => m.status === "live")) return 30_000
+            const TWO_HOURS = 2 * 60 * 60 * 1000
+            const now = Date.now()
+            const imminent = data.some(
+                (m) => m.status === "scheduled" && new Date(m.match_date).getTime() - now <= TWO_HOURS
+            )
+            return imminent ? 60_000 : false
         },
     })
 
@@ -304,6 +359,10 @@ export default function MatchListScreen() {
                         const pick = picksMap[item.id]
                         const isLive = item.status === "live"
                         const isFinished = FINISHED_STATUSES.includes(item.status)
+                        const startsIn = new Date(item.match_date).getTime() - now
+                        const showCountdown =
+                            item.status === "scheduled" && startsIn > 0 && startsIn <= COUNTDOWN_WINDOW_MS
+                        const outcome = isFinished && pick ? getPickOutcome(item, pick) : null
 
                         return (
                             <TouchableOpacity
@@ -343,6 +402,11 @@ export default function MatchListScreen() {
                                                 <Text style={styles.timeText}>
                                                     {formatTimeShort(item.match_date)}
                                                 </Text>
+                                                {showCountdown && (
+                                                    <Text style={styles.countdownText}>
+                                                        {formatCountdown(startsIn)}
+                                                    </Text>
+                                                )}
                                             </>
                                         )}
                                     </View>
@@ -367,6 +431,13 @@ export default function MatchListScreen() {
                                 <View style={styles.badgeRow}>
                                     {isLive && <LiveBadge />}
                                     {segment === "live" && !isLive && <UpcomingBadge />}
+                                    {segment === "finished" && outcome && (
+                                        <View style={[styles.outcomeBadge, styles[`${outcome}Badge`]]}>
+                                            <Text style={[styles.outcomeBadgeText, styles[`${outcome}BadgeText`]]}>
+                                                {OUTCOME_LABELS[outcome]}
+                                            </Text>
+                                        </View>
+                                    )}
                                     {item.status === "scheduled" && !item.picks_closed && pick && (
                                         <View style={styles.savedBadge}>
                                             <Text style={styles.savedBadgeText}>Guardado</Text>
@@ -498,6 +569,39 @@ const styles = StyleSheet.create({
         color: colors.textSecondary,
         fontSize: 11,
         marginTop: 4,
+    },
+    countdownText: {
+        color: colors.accent,
+        fontSize: 10,
+        fontWeight: "700",
+        marginTop: 3,
+    },
+    outcomeBadge: {
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 4,
+    },
+    outcomeBadgeText: {
+        fontSize: 12,
+        fontWeight: "bold",
+    },
+    exactBadge: {
+        backgroundColor: colors.accent,
+    },
+    exactBadgeText: {
+        color: "#0D0D0D",
+    },
+    winnerBadge: {
+        backgroundColor: "#1F2A0E",
+    },
+    winnerBadgeText: {
+        color: "#4CAF50",
+    },
+    missBadge: {
+        backgroundColor: "#2A1414",
+    },
+    missBadgeText: {
+        color: "#FF6B60",
     },
     badgeRow: {
         flexDirection: "row",

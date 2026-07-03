@@ -1,8 +1,9 @@
 import { useCallback, useMemo, useState } from "react"
-import { View, Text, ScrollView, RefreshControl, StyleSheet, ActivityIndicator } from "react-native"
+import { View, Text, ScrollView, RefreshControl, StyleSheet, ActivityIndicator, TouchableOpacity } from "react-native"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import supabase from "../lib/supabase"
 import TeamCrest from "../components/TeamCrest"
+import BracketView from "../components/BracketView"
 import { colors } from "../theme/colors"
 
 interface Standing {
@@ -74,6 +75,8 @@ const LOCAL_GROUPS: Standing[] = [
 export default function GroupsScreen() {
   const queryClient = useQueryClient()
   const [refreshing, setRefreshing] = useState(false)
+  // Group stage is over — the knockout bracket is what matters now.
+  const [segment, setSegment] = useState<"bracket" | "groups">("bracket")
 
   const { data: standings, isLoading } = useQuery({
     queryKey: ["group_standings"],
@@ -105,6 +108,7 @@ export default function GroupsScreen() {
     setRefreshing(true)
     try {
       await queryClient.invalidateQueries({ queryKey: ["group_standings"] })
+      await queryClient.invalidateQueries({ queryKey: ["matches"] })
     } finally {
       setRefreshing(false)
     }
@@ -126,7 +130,28 @@ export default function GroupsScreen() {
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
       }
     >
-      {grouped.map(({ group, teams }) => {
+      <View style={styles.segmentedContainer}>
+        <TouchableOpacity
+          style={[styles.segmentButton, segment === "bracket" && styles.segmentActive]}
+          onPress={() => setSegment("bracket")}
+        >
+          <Text style={[styles.segmentText, segment === "bracket" && styles.segmentTextActive]}>
+            Llaves
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.segmentButton, segment === "groups" && styles.segmentActive]}
+          onPress={() => setSegment("groups")}
+        >
+          <Text style={[styles.segmentText, segment === "groups" && styles.segmentTextActive]}>
+            Grupos
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {segment === "bracket" && <BracketView />}
+
+      {segment === "groups" && grouped.map(({ group, teams }) => {
         const leaderPoints = teams.length > 0 ? Math.max(...teams.map((t) => t.points)) : -1
         return (
           <View key={group} style={styles.card}>
@@ -172,6 +197,32 @@ export default function GroupsScreen() {
 }
 
 const styles = StyleSheet.create({
+  segmentedContainer: {
+    flexDirection: "row",
+    backgroundColor: colors.surface,
+    borderRadius: 10,
+    padding: 4,
+    marginBottom: 16,
+  },
+  segmentButton: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  segmentActive: {
+    backgroundColor: colors.accent,
+  },
+  segmentText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.textSecondary,
+  },
+  segmentTextActive: {
+    color: "#0D0D0D",
+    fontWeight: "bold",
+  },
   loadingContainer: {
     flex: 1,
     backgroundColor: colors.background,

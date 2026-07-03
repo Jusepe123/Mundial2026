@@ -146,7 +146,15 @@ function MainNavigator() {
                     queryClient.invalidateQueries({ queryKey: ["scorers"] })
                 }
             )
-            .subscribe()
+            // SUBSCRIBED fires on the initial join and on every rejoin after a
+            // disconnect. Events emitted while disconnected are never replayed,
+            // so refetch on each (re)join to recover anything missed.
+            .subscribe((status) => {
+                if (status === "SUBSCRIBED") {
+                    queryClient.invalidateQueries({ queryKey: ["matches"] })
+                    queryClient.invalidateQueries({ queryKey: ["currentMatch"] })
+                }
+            })
 
         return () => {
             supabase.removeChannel(channel)

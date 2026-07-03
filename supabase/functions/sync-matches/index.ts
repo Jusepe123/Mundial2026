@@ -212,6 +212,21 @@ interface MatchResult {
     loser: string | null;
 }
 
+// API workaround: when a match goes to penalties, football-data.org includes
+// penalty goals in score.fullTime. Subtract them to get the real regulation
+// (90+ET) score.
+function getRegulationScores(match: any): { home: number | null; away: number | null } {
+    let home = match.score.fullTime.home;
+    let away = match.score.fullTime.away;
+    const penHome = match.score.penalties?.home ?? null;
+    const penAway = match.score.penalties?.away ?? null;
+    if (penHome !== null && penAway !== null && home !== null && away !== null && home !== away) {
+        home = home - penHome;
+        away = away - penAway;
+    }
+    return { home, away };
+}
+
 // Winner/loser are decided by penalties when present, otherwise by fullTime score.
 function getMatchResult(match: any): MatchResult {
     if (match.score.fullTime.home === null || match.score.fullTime.away === null) {
@@ -265,6 +280,7 @@ Deno.serve(async (req) => {
     let syncedScorersCount = 0;
     let syncedShirtNumbers = 0;
     let totalGoals = 0;
+    let scorersRelevant = false;
     const errors: string[] = [];
 
     try {
@@ -294,6 +310,14 @@ Deno.serve(async (req) => {
         const data = await footballDataResponse.json();
         const allMatches = data.matches;
 
+        // Scorer goals only change while matches are being played or just ended.
+        // Outside those windows, skip the scorers API calls (rate-limit headroom).
+        const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+        scorersRelevant = allMatches.some((m: any) =>
+            m.status === 'IN_PLAY' || m.status === 'PAUSED' || m.status === 'LIVE' ||
+            (m.status === 'FINISHED' && Date.now() - new Date(m.utcDate).getTime() < SIX_HOURS_MS)
+        );
+
         // 1b. Filter to only process relevant matches (skip already-finished + far-future)
         const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
 
@@ -309,13 +333,19 @@ Deno.serve(async (req) => {
             if (match.status === 'FINISHED') {
                 if (!dbData) return true;
                 if (dbData.status !== 'finished') return true;
-                // Always process finished knockout matches for bracket propagation
-                if (match.stage !== 'GROUP_STAGE') return true;
-                // For group matches: skip only if scores match exactly (penalties included)
-                if (dbData.home_score === match.score.fullTime.home &&
-                    dbData.away_score === match.score.fullTime.away &&
+                // Skip only if regulation scores, penalties and team names all match.
+                // (Knockout bracket propagation is guaranteed by the post-processing
+                // step that reads finished matches from the DB, so unchanged finished
+                // knockout matches don't need to be re-upserted every run.)
+                const reg = getRegulationScores(match);
+                const homeName = TEAM_ALIASES[match.homeTeam.name] ?? (match.homeTeam.name || "Por definir");
+                const awayName = TEAM_ALIASES[match.awayTeam.name] ?? (match.awayTeam.name || "Por definir");
+                if (dbData.home_score === reg.home &&
+                    dbData.away_score === reg.away &&
                     dbData.home_penalties === (match.score.penalties?.home ?? null) &&
-                    dbData.away_penalties === (match.score.penalties?.away ?? null)) {
+                    dbData.away_penalties === (match.score.penalties?.away ?? null) &&
+                    dbData.home_team === homeName &&
+                    dbData.away_team === awayName) {
                     return false;
                 }
                 return true;
@@ -395,19 +425,9 @@ Deno.serve(async (req) => {
                 const rawHome = match.homeTeam.name || "Por definir";
                 const rawAway = match.awayTeam.name || "Por definir";
 
-                // API workaround: when a match goes to penalties, football-data.org
-                // includes penalty goals in score.fullTime. Subtract them to get
-                // the real regulation (90+ET) score.
-                let homeScore = match.score.fullTime.home;
-                let awayScore = match.score.fullTime.away;
+                const { home: homeScore, away: awayScore } = getRegulationScores(match);
                 const rawHomePenalties = match.score.penalties?.home ?? null;
                 const rawAwayPenalties = match.score.penalties?.away ?? null;
-                if (rawHomePenalties !== null && rawAwayPenalties !== null && homeScore !== null && awayScore !== null) {
-                    if (homeScore > awayScore || awayScore > homeScore) {
-                        homeScore = homeScore - rawHomePenalties;
-                        awayScore = awayScore - rawAwayPenalties;
-                    }
-                }
 
                 const newMatchData: Partial<Match> = {
                     external_id: match.id,
@@ -523,11 +543,32 @@ Deno.serve(async (req) => {
     // 4b. Post-processing bracket propagation from DB data
     try {
         const bracketExtIds = Object.keys(KNOCKOUT_BRACKET).map(Number);
-        const { data: bracketMatches } = await supabase
-            .from('matches')
-            .select('external_id, home_team, away_team, home_score, away_score, home_penalties, away_penalties, status')
-            .in('external_id', bracketExtIds)
-            .eq('status', 'finished');
+        const targetExtIds = new Set<number>();
+        for (const slot of Object.values(KNOCKOUT_BRACKET)) {
+            if ('winNextExtId' in slot) {
+                targetExtIds.add(slot.winNextExtId);
+                targetExtIds.add(slot.loseNextExtId);
+            } else {
+                targetExtIds.add(slot.nextExtId);
+            }
+        }
+
+        const [{ data: bracketMatches }, { data: targetMatches }] = await Promise.all([
+            supabase
+                .from('matches')
+                .select('external_id, home_team, away_team, home_score, away_score, home_penalties, away_penalties, status')
+                .in('external_id', bracketExtIds)
+                .eq('status', 'finished'),
+            supabase
+                .from('matches')
+                .select('external_id, home_team, away_team')
+                .in('external_id', [...targetExtIds]),
+        ]);
+
+        const targetMap = new Map<number, { home_team: string; away_team: string }>();
+        for (const t of targetMatches ?? []) {
+            targetMap.set(t.external_id, { home_team: t.home_team, away_team: t.away_team });
+        }
 
         function getMatchResultFromDb(m: any): MatchResult {
             if (m.home_score === null || m.away_score === null) return { winner: null, loser: null };
@@ -541,6 +582,22 @@ Deno.serve(async (req) => {
             return { winner: null, loser: null };
         }
 
+        // Writes only when the slot doesn't already hold the team, so repeated
+        // cron runs don't fire no-op UPDATEs (each one reaches every Realtime client).
+        async function advanceTeam(extId: number, side: 'home' | 'away', team: string, label: string): Promise<boolean> {
+            const teamCol = side === 'home' ? 'home_team' : 'away_team';
+            const current = targetMap.get(extId);
+            if (current && current[teamCol] === team) return false;
+            const flagCol = side === 'home' ? 'home_flag' : 'away_flag';
+            const { error } = await supabase.from('matches').update({ [teamCol]: team, [flagCol]: null }).eq('external_id', extId);
+            if (error) {
+                errors.push(`Error advancing ${label} (post) to match ${extId}: ${error.message}`);
+                return false;
+            }
+            if (current) current[teamCol] = team;
+            return true;
+        }
+
         if (bracketMatches) {
             for (const dbMatch of bracketMatches) {
                 const bracketSlot = KNOCKOUT_BRACKET[dbMatch.external_id];
@@ -550,29 +607,14 @@ Deno.serve(async (req) => {
                 if (isSemi) {
                     const semi = bracketSlot as BracketSlotSemi;
                     const { winner: winTeam, loser: loseTeam } = getMatchResultFromDb(dbMatch);
-                    if (winTeam) {
-                        const teamCol = semi.winSide === 'home' ? 'home_team' : 'away_team';
-                        const flagCol = semi.winSide === 'home' ? 'home_flag' : 'away_flag';
-                        const { error: ae } = await supabase.from('matches').update({ [teamCol]: winTeam, [flagCol]: null }).eq('external_id', semi.winNextExtId);
-                        if (ae) errors.push(`Error advancing winner (post) to match ${semi.winNextExtId}: ${ae.message}`);
-                    }
-                    if (loseTeam) {
-                        const teamCol = semi.loseSide === 'home' ? 'home_team' : 'away_team';
-                        const flagCol = semi.loseSide === 'home' ? 'home_flag' : 'away_flag';
-                        const { error: re } = await supabase.from('matches').update({ [teamCol]: loseTeam, [flagCol]: null }).eq('external_id', semi.loseNextExtId);
-                        if (re) errors.push(`Error advancing loser (post) to match ${semi.loseNextExtId}: ${re.message}`);
-                    }
-                    advancedCount++;
+                    let advanced = false;
+                    if (winTeam) advanced = (await advanceTeam(semi.winNextExtId, semi.winSide, winTeam, 'winner')) || advanced;
+                    if (loseTeam) advanced = (await advanceTeam(semi.loseNextExtId, semi.loseSide, loseTeam, 'loser')) || advanced;
+                    if (advanced) advancedCount++;
                 } else {
                     const slot = bracketSlot as BracketSlot;
                     const { winner: winTeam } = getMatchResultFromDb(dbMatch);
-                    if (winTeam) {
-                        const teamCol = slot.side === 'home' ? 'home_team' : 'away_team';
-                        const flagCol = slot.side === 'home' ? 'home_flag' : 'away_flag';
-                        const { error: ae } = await supabase.from('matches').update({ [teamCol]: winTeam, [flagCol]: null }).eq('external_id', slot.nextExtId);
-                        if (ae) errors.push(`Error advancing winner (post) to match ${slot.nextExtId}: ${ae.message}`);
-                    }
-                    advancedCount++;
+                    if (winTeam && await advanceTeam(slot.nextExtId, slot.side, winTeam, 'winner')) advancedCount++;
                 }
             }
         }
@@ -581,8 +623,8 @@ Deno.serve(async (req) => {
         errors.push(`Post-bracket propagation error: ${bracketError.message}`);
     }
 
-    // 5. Sync top scorers from football-data.org
-    try {
+    // 5. Sync top scorers from football-data.org (only around match windows)
+    if (scorersRelevant) try {
         const scorersResponse = await fetch("https://api.football-data.org/v4/competitions/WC/scorers", {
             headers: {
                 "X-Auth-Token": API_FOOTBALL_KEY,
@@ -630,8 +672,8 @@ Deno.serve(async (req) => {
         errors.push(`Error syncing scorers: ${scorerError.message}`);
     }
 
-    // 5. Fetch shirt numbers for scorers that don't have one yet
-    try {
+    // 5b. Fetch shirt numbers for scorers that don't have one yet
+    if (scorersRelevant) try {
         const { data: missingShirt } = await supabase
             .from("scorers")
             .select("external_player_id")

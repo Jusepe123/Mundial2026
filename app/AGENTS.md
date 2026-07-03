@@ -1,5 +1,5 @@
 # Mundial 2026 — Documentación del Proyecto
-> Última actualización: 01-jul-2026
+> Última actualización: 02-jul-2026
 
 ## Stack Tecnológico
 
@@ -34,6 +34,7 @@ mundial-2026/
 │   │   ├── components/
 │   │   │   ├── TeamCrest.tsx      # Círculo con bandera: crest → flagcdn/flagsapi → alt CDN → inicial
 │   │   │   ├── MatchPicksTable.tsx # Tabla de pronósticos de todos los jugadores por partido
+│   │   │   ├── BracketView.tsx    # Llaves knockout: columnas 16avos→Final con conectores, scroll horizontal
 │   │   │   └── PlayerFigure.tsx   # SVG de jugador con camiseta (color/patrón) + número
 │   │   ├── navigation/
 │   │   │   └── AppNavigator.tsx   # Navegación + Splash + prefetchFlags tras hydrate
@@ -41,7 +42,7 @@ mundial-2026/
 │   │       ├── WelcomeScreen.tsx  # Login/registro con username + device_id
 │   │       ├── MatchListScreen.tsx# Partidos con segmentos, Realtime, sync-matches una vez al montar
 │   │       ├── PickScreen.tsx     # Pronóstico por partido, invalida userPicks al guardar
-│   │       ├── GroupsScreen.tsx   # Tabla de posiciones con DG/GC/GD + banderas
+│   │       ├── GroupsScreen.tsx   # Segmentos "Llaves" (BracketView, default) / "Grupos" (tabla posiciones)
 │   │       ├── SpecialPicksScreen.tsx # 6 categorías especiales
 │   │       ├── TopScorersScreen.tsx   # Goleadores + equipos más goleadores
 │   │       ├── MatchDetailScreen.tsx  # Detalle de partido individual
@@ -90,12 +91,12 @@ RootStack (sin header)
 ### staleTime global (App.tsx)
 - `staleTime: 30_000` — React Query no refetch si datos tienen < 30s
 - `gcTime: 600_000` (10 min) — datos persisten en cache al cambiar de tab
-- `refetchOnWindowFocus: false` — no refetch al volver a la app
+- `refetchOnWindowFocus: true` + `focusManager` cableado a `AppState` — al volver la app a foreground se refetchean las queries stale. Crítico: los eventos Realtime perdidos mientras la app está en background NO se re-emiten, así que sin esto la app mostraba scores viejos indefinidamente (bug del 2-2 fantasma en Portugal 2-1 Croatia).
 
 ### Per-query overrides
 | Query | staleTime | refetchInterval |
 |-------|-----------|-----------------|
-| matches | 30s (global) | — (solo Realtime + sync) |
+| matches | 30s (global) | 30s si hay partido live, 60s si hay partido a <2h, si no — (Realtime) |
 | userPicks | 30s | — |
 | match (single) | 60s | — |
 | scoring_config | 300s (5 min) | — |
@@ -105,7 +106,8 @@ RootStack (sin header)
 | currentMatch | 15s | — |
 
 ### Data fetching reducido
-- **MatchListScreen**: eliminado `refetchInterval: 30s` en matches. `sync-matches` se invoca una sola vez al montar la pantalla (antes había un timer de 30s/120s por dispositivo, redundante con el pg_cron cada 2 min y con riesgo de agotar el rate limit de football-data.org al escalar N dispositivos). Actualizaciones en vivo llegan por Realtime subscription (movida a AppNavigator), alimentada por el pg_cron.
+- **MatchListScreen**: `sync-matches` se invoca una sola vez al montar la pantalla (antes había un timer de 30s/120s por dispositivo, redundante con el pg_cron cada 2 min y con riesgo de agotar el rate limit de football-data.org al escalar N dispositivos). Actualizaciones en vivo llegan por Realtime subscription (AppNavigator), alimentada por el pg_cron. Como red de seguridad (Realtime puede caerse silenciosamente), la query `matches` tiene un `refetchInterval` condicional que pollea **solo la DB de Supabase** (no football-data.org): 30s si hay partido live, 60s si el próximo partido está a <2h, apagado el resto del tiempo.
+- **Resiliencia Realtime (AppNavigator)**: el `.subscribe()` del canal `matches-changes` tiene callback de status — en cada `SUBSCRIBED` (join inicial y cada rejoin tras desconexión) invalida `matches` y `currentMatch`, recuperando los eventos perdidos durante la desconexión.
 - **LeaderboardScreen**: 3 queries de count reemplazadas por 1 query que trae solo `status`
 - **PickScreen**: scoring_config se cachea 5 min (casi nunca cambia)
 
@@ -211,8 +213,9 @@ ListFooterComponent:
 - Normaliza alias de equipos (Czechia → Czech Republic, etc.)
 - Lee `score.penalties.home/away` de la API y los guarda en `home_penalties`/`away_penalties`
 - Trigger `calculate-points` si match cambió a finished o si el score cambió en un match ya finished
-- **Selective sync**: filtra matches antes del upsert loop. Skip: already-finished de fase de grupos con scores idénticos, far-future (>3h) si ya están en DB. Procesa: live, transitioning, score changes en finished, upcoming (<3h), matches no existentes en DB, partidos donde DB tenga "Por definir" como equipo, y **todos los partidos de knockout finished** (para bracket propagation). Usa `SELECT external_id, status, home_score, away_score, home_penalties, away_penalties, home_team, away_team` inicial + `Map<external_id, MatchData>` para lookup O(1).
-- **Bracket propagation**: Mapeo completo del torneo (ext_ids de API). Cuando un partido de knockout termina, avanza automáticamente el ganador al siguiente partido del bracket (y el perdedor de semifinal al 3er puesto). Usa `|| "Por definir"` (no `??`) para manejar strings vacíos de la API. **Además del propagation en el loop principal, hay un post-processing** que lee los partidos finished desde la DB y propaga ganadores usando `home_team`/`away_team` y `home_penalties`/`away_penalties` como datos fuente. Esto asegura que incluso partidos knockout que ya estaban finished se propaguen correctamente. `getMatchResult`/`getMatchResultFromDb` devuelven `{winner, loser}` en una sola función (antes eran 4 funciones duplicadas).
+- **Selective sync**: filtra matches antes del upsert loop. Skip: already-finished (cualquier fase, grupos y knockout) cuyo score reglamentario + penales + nombres de equipo sean idénticos a la DB; far-future (>3h) si ya están en DB. Procesa: live, transitioning, score changes en finished, upcoming (<3h), matches no existentes en DB y partidos donde DB tenga "Por definir" como equipo. El bracket propagation de knockouts finished ya no requiere re-upsertearlos cada run: lo garantiza el post-processing (lee desde DB). La comparación de scores usa `getRegulationScores()` (helper que resta penales del fullTime), la misma lógica del upsert — si no, los partidos con penales se re-procesarían eternamente. Usa `SELECT external_id, status, home_score, away_score, home_penalties, away_penalties, home_team, away_team` inicial + `Map<external_id, MatchData>` para lookup O(1).
+- **Bracket propagation**: Mapeo completo del torneo (ext_ids de API). Cuando un partido de knockout termina, avanza automáticamente el ganador al siguiente partido del bracket (y el perdedor de semifinal al 3er puesto). Usa `|| "Por definir"` (no `??`) para manejar strings vacíos de la API. **Además del propagation en el loop principal, hay un post-processing** que lee los partidos finished desde la DB y propaga ganadores usando `home_team`/`away_team` y `home_penalties`/`away_penalties` como datos fuente. El post-processing **compara contra el valor actual del slot destino antes de escribir** (`advanceTeam()`): antes escribía incondicionalmente en cada run, generando UPDATEs no-op cada 2 min que disparaban eventos Realtime a todos los clientes. `getMatchResult`/`getMatchResultFromDb` devuelven `{winner, loser}` en una sola función.
+- **Scorers gating**: el sync de goleadores + shirt numbers solo corre si hay algún partido live o finished hace <6h (los goles solo cambian en esas ventanas). Fuera de ellas se ahorran hasta 6 llamadas a football-data.org por run.
 - **Venue**: extrae `match.venue` de la API. Si es null, usa `VENUE_MAP` (diccionario hardcodeado con los 104 partidos según calendario oficial FIFA).
 - **Cron job** (`pg_cron` + `pg_net`): `net.http_post` cada 2 min a sync-matches para sync incluso sin frontend abierto. Es la única fuente de sync periódico — el frontend ya no hace polling propio (ver Data fetching reducido), solo invoca sync-matches una vez al abrir MatchListScreen y en pull-to-refresh.
 
@@ -240,6 +243,7 @@ ListFooterComponent:
 | Score incorrecto de un partido ya finished por cambio en API externa | selective sync saltaba matches finished sin comparar scores | selective sync compara scores completos + penales; trigger `calculate-points` si cambia |
 | API football-data.org incluye goles de penales en score.fullTime | Bug de la API externa | sync-matches resta penales del fullTime cuando duration=PENALTY_SHOOTOUT |
 | actualDraw incorrecto con penales | actualDraw se derivaba de penales (siempre false) | actualDraw ahora usa `match.home_score === match.away_score` (reglamentario) |
+| App muestra score viejo tras gol anulado (Portugal 2-1 Croatia se veía 2-2) | Eventos Realtime perdidos con app en background no se re-emiten; sin refetch al volver a foreground; la DB sí se auto-corrigió | 3 capas: `focusManager` + `refetchOnWindowFocus: true` (App.tsx), invalidate en cada `SUBSCRIBED` del canal Realtime (AppNavigator), polling condicional de la DB durante partidos live (MatchListScreen) |
 
 ## Historial de Builds & Updates
 
@@ -262,6 +266,9 @@ ListFooterComponent:
 | 30-jun | — | 🚀 OTA + Edge Function + DB | Fix actualDraw en calculate-points (basado en score reglamentario). Fix sync-matches: resta goles de penales del fullTime. UI: PickScreen score en verde. Scores corregidos Netherlands 1-1 Morocco y Germany 1-1 Paraguay. Recálculo de puntos con actualDraw corregido. |
 | 30-jun | — | 🚀 OTA + Edge Function + DB | **Venue**: nueva migración 012_venue_column.sql, columna `venue` en matches. Sync-matches extrae `match.venue` de la API. Frontend muestra venue en MatchListScreen, PickScreen y MatchPicksTable. **Fix bracket propagation**: se movió la propagación fuera del condicional `statusChanged || scoreChanged` y se agregó post-processing desde DB. Corrige el caso de Paraguay vs Francia (R16) donde Francia no se propagaba. |
 | 30-jun | — | ✅ Edge Function + DB | **VENUE_MAP hardcodeado**: la API de football-data.org no provee datos de sede para este torneo (campo `venue` siempre null). Se agregó diccionario `VENUE_MAP` con los 104 partidos mapeados a sus estadios según el calendario oficial FIFA. Backfill de todas las venues vía REST API. Cleanup de todo código debug. |
+| 02-jul | — | ✅ DB | **Cron a 1 min**: `sync-matches-every-1min` reemplaza al de 2 min (goles más rápidos; el gating de scorers dejó margen de rate limit). Ejecutado vía Management API con el token del CLI. |
+| 02-jul | — | 🚀 OTA | **UI: Llaves + polish de MatchList**. (1) `BracketView.tsx`: bracket knockout completo (16avos→Final + 3er puesto) con scroll horizontal, conectores tipo llave, ganador en accent, punto rojo live, tap→MatchDetail/Pick, auto-scroll a la ronda activa; los ext_ids por ronda están ordenados bracket-adjacent (match j alimentado por 2j y 2j+1). GroupsScreen ganó segmentos "Llaves" (default) / "Grupos". (2) MatchListScreen: countdown "⏱ en Xh Ym" (partidos a <6h, tick 30s) y badge de resultado del pronóstico en Finalizados (🎯 Exacto / ✓ Ganador / ✗ Fallaste, replica la lógica de calculate-points incluyendo penales). |
+| 02-jul | — | 🚀 OTA + Edge Function + DB | **Fix "score fantasma"** (app mostraba 2-2 en Portugal 2-1 Croatia tras gol anulado por offside): la DB se auto-corregía pero la app nunca refetcheaba — eventos Realtime perdidos en background se pierden para siempre. App: `focusManager`+`refetchOnWindowFocus:true`, invalidate en cada `SUBSCRIBED` del canal, polling condicional de matches (30s live / 60s a <2h). Edge function: skip de knockouts finished sin cambios (usando `getRegulationScores()` compartido), `advanceTeam()` compara antes de escribir (elimina UPDATEs no-op cada 2 min), scorers sync gateado a ventanas de partido (<6h). |
 | 01-jul | — | ✅ OTA + Edge Function + DB | **Fixes de revisión de código** (excepto auth device_id, fuera de alcance por ahora — 10 jugadores, riesgo bajo): (1) `group_standings_view` ahora ordena por goal_difference antes que goals_scored (tiebreak FIFA correcto), migración `20260701000000_group_standings_gd_tiebreak.sql`. (2) LeaderboardScreen ordena `leaderboard` explícitamente por `total_points` (antes dependía del ORDER BY interno de la vista, no garantizado). (3) `calculate-points` ahora rechaza cualquier caller que no sea el service role key. (4) sync-matches: colapsadas las 4 funciones getWinner/getLoser/getWinnerFromDb/getLoserFromDb en `getMatchResult`/`getMatchResultFromDb`. (5) MatchListScreen: eliminado el polling de `sync-matches` cada 30s/120s por dispositivo (redundante con el pg_cron cada 2 min, riesgo de rate limit en football-data.org con varios dispositivos abiertos a la vez); ahora solo sincroniza una vez al montar. (6) AppNavigator: los 5 listeners de doble-tap idénticos se unificaron en `makeDoubleTapListeners`. |
 
 ## Reglas para el Agente
@@ -274,9 +281,10 @@ ListFooterComponent:
 - Los alias de equipos (Czechia, Korea Republic, etc.) están en sync-matches y en la migración 20260614070205. Si se agrega un alias, actualizarlo en ambos lugares.
 - El scoring_config nunca se edita desde código, solo desde Supabase dashboard o MCP.
 
-**pg_cron job:** nombre `'sync-matches-every-2min'`, schedule `'*/2 * * * *'`  
-Para verificar: `SELECT * FROM cron.job WHERE jobname = 'sync-matches-every-2min';`  
-Para eliminar: `SELECT cron.unschedule('sync-matches-every-2min');`
+**pg_cron job:** nombre `'sync-matches-every-1min'`, schedule `'* * * * *'` (bajado de 2 min a 1 min el 02-jul; el gating de scorers dejó margen de rate limit)  
+Para verificar: `SELECT * FROM cron.job WHERE jobname = 'sync-matches-every-1min';`  
+Para eliminar: `SELECT cron.unschedule('sync-matches-every-1min');`  
+**Ejecutar SQL sin MCP:** el token del CLI (Windows Credential Manager, target `Supabase CLI:supabase`) sirve para `POST https://api.supabase.com/v1/projects/yskphlvaurqgkqgxmxzi/database/query` con body `{"query": "..."}`.
 
 
 ## EAS Build & Update
