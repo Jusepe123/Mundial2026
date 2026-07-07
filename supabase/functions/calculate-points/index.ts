@@ -49,7 +49,7 @@ Deno.serve(async (req) => {
         // 1. Fetch the match
         const { data: match, error: matchError } = await supabase
             .from('matches')
-            .select('home_score, away_score, home_penalties, away_penalties, stage')
+            .select('home_score, away_score, home_penalties, away_penalties, stage, home_full_score, away_full_score')
             .eq('id', match_id)
             .single();
 
@@ -62,16 +62,27 @@ Deno.serve(async (req) => {
         }
 
         // Determine the actual winner:
-        // If penalties exist (both non-null), winner is who won the shootout.
-        // Otherwise, winner is determined by regulation score.
+        // 1. If penalties exist (both non-null), winner is who won the shootout.
+        // 2. If fullTime scores exist (extra time), use them for winner/draw.
+        // 3. Otherwise, winner is determined by regulation score.
         const decidedByPenalties = match.home_penalties !== null && match.away_penalties !== null;
+        const hasFullTime = match.home_full_score !== null && match.away_full_score !== null;
         const actualHomeWins = decidedByPenalties
             ? (match.home_penalties! > match.away_penalties!)
-            : (match.home_score > match.away_score);
+            : hasFullTime
+                ? (match.home_full_score! > match.away_full_score!)
+                : (match.home_score > match.away_score);
         const actualAwayWins = decidedByPenalties
             ? (match.away_penalties! > match.home_penalties!)
-            : (match.away_score > match.home_score);
-        const actualDraw = match.home_score === match.away_score;
+            : hasFullTime
+                ? (match.away_full_score! > match.home_full_score!)
+                : (match.away_score > match.home_score);
+        // actualDraw: for extra time (fullTime exists), use fullTime result.
+        // For penalties and regular matches, use regulation score (penalty matches
+        // ended in a draw during regulation, so draw predictions are correct).
+        const actualDraw = hasFullTime
+            ? match.home_full_score === match.away_full_score
+            : match.home_score === match.away_score;
 
         // 2. Fetch scoring config for this stage
         const { data: config, error: configError } = await supabase

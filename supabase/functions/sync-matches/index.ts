@@ -316,12 +316,12 @@ Deno.serve(async (req) => {
         // 0. Fetch all existing match data in a single query for O(1) lookup
         const { data: existingMatches } = await supabase
             .from('matches')
-            .select('external_id, status, home_score, away_score, home_penalties, away_penalties, home_team, away_team');
+            .select('external_id, status, home_score, away_score, home_penalties, away_penalties, home_team, away_team, home_full_score, away_full_score');
 
-        const dbMatchMap = new Map<number, { status: string; home_score: number | null; away_score: number | null; home_penalties: number | null; away_penalties: number | null; home_team: string; away_team: string }>();
+        const dbMatchMap = new Map<number, { status: string; home_score: number | null; away_score: number | null; home_penalties: number | null; away_penalties: number | null; home_team: string; away_team: string; home_full_score: number | null; away_full_score: number | null }>();
         if (existingMatches) {
             for (const m of existingMatches) {
-                dbMatchMap.set(m.external_id, { status: m.status, home_score: m.home_score, away_score: m.away_score, home_penalties: m.home_penalties, away_penalties: m.away_penalties, home_team: m.home_team, away_team: m.away_team });
+                dbMatchMap.set(m.external_id, { status: m.status, home_score: m.home_score, away_score: m.away_score, home_penalties: m.home_penalties, away_penalties: m.away_penalties, home_team: m.home_team, away_team: m.away_team, home_full_score: m.home_full_score, away_full_score: m.away_full_score });
             }
         }
 
@@ -362,12 +362,15 @@ Deno.serve(async (req) => {
             if (match.status === 'FINISHED') {
                 if (!dbData) return true;
                 if (dbData.status !== 'finished') return true;
-                // Skip only if regulation scores, penalties and team names all match.
+                // Skip only if regulation scores, penalties, fullTime scores and team names all match.
                 // (Knockout bracket propagation is guaranteed by the post-processing
                 // step that reads finished matches from the DB, so unchanged finished
                 // knockout matches don't need to be re-upserted every run.)
                 const reg = getRegulationScores(match);
                 const pen = getPenaltyScores(match);
+                const isExtraTime = match.score.duration === 'EXTRA_TIME';
+                const apiFullHome = isExtraTime ? match.score.fullTime.home : null;
+                const apiFullAway = isExtraTime ? match.score.fullTime.away : null;
                 const homeName = TEAM_ALIASES[match.homeTeam.name] ?? (match.homeTeam.name || "Por definir");
                 const awayName = TEAM_ALIASES[match.awayTeam.name] ?? (match.awayTeam.name || "Por definir");
                 if (dbData.home_score === reg.home &&
@@ -375,7 +378,9 @@ Deno.serve(async (req) => {
                     dbData.home_penalties === pen.home &&
                     dbData.away_penalties === pen.away &&
                     dbData.home_team === homeName &&
-                    dbData.away_team === awayName) {
+                    dbData.away_team === awayName &&
+                    dbData.home_full_score === apiFullHome &&
+                    dbData.away_full_score === apiFullAway) {
                     return false;
                 }
                 return true;
@@ -457,6 +462,7 @@ Deno.serve(async (req) => {
 
                 const { home: homeScore, away: awayScore } = getRegulationScores(match);
                 const { home: rawHomePenalties, away: rawAwayPenalties } = getPenaltyScores(match);
+                const isExtraTime = match.score.duration === 'EXTRA_TIME';
 
                 // Lookup old data from map (O(1), no individual SELECT)
                 const oldData = dbMatchMap.get(match.id);
@@ -478,6 +484,8 @@ Deno.serve(async (req) => {
                     away_score: awayScore,
                     home_penalties: rawHomePenalties,
                     away_penalties: rawAwayPenalties,
+                    home_full_score: isExtraTime ? match.score.fullTime.home : null,
+                    away_full_score: isExtraTime ? match.score.fullTime.away : null,
                     status: status,
                     picks_closed: picksClosed,
                     venue: match.venue ?? VENUE_MAP[match.id] ?? null,
@@ -502,11 +510,15 @@ Deno.serve(async (req) => {
                 // 3. Trigger calculate-points if status changed to 'finished' or scores changed
                 const newStatus = upsertedMatch?.status;
                 const statusChanged = oldData?.status !== 'finished' && newStatus === 'finished';
+                const newFullHome = isExtraTime ? match.score.fullTime.home : null;
+                const newFullAway = isExtraTime ? match.score.fullTime.away : null;
                 const scoreChanged = oldData?.status === 'finished' && newStatus === 'finished' && (
                     oldData.home_score !== homeScore ||
                     oldData.away_score !== awayScore ||
                     oldData.home_penalties !== rawHomePenalties ||
-                    oldData.away_penalties !== rawAwayPenalties
+                    oldData.away_penalties !== rawAwayPenalties ||
+                    oldData.home_full_score !== newFullHome ||
+                    oldData.away_full_score !== newFullAway
                 );
 
                 if (upsertedMatch && newStatus === 'finished' && (statusChanged || scoreChanged)) {
