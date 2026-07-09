@@ -14,6 +14,8 @@ interface Match {
     away_score: number | null;
     home_penalties: number | null;
     away_penalties: number | null;
+    home_full_score: number | null;
+    away_full_score: number | null;
     status: string;
     picks_closed: boolean;
     venue: string | null;
@@ -190,8 +192,8 @@ const KNOCKOUT_BRACKET: Record<number, BracketSlot | BracketSlotSemi> = {
     537429: { nextExtId: 537382, side: 'home' },
     537430: { nextExtId: 537382, side: 'away' },
     // R16 → QF
-    537376: { nextExtId: 537383, side: 'home' },
-    537375: { nextExtId: 537383, side: 'away' },
+    537375: { nextExtId: 537383, side: 'home' },
+    537376: { nextExtId: 537383, side: 'away' },
     537379: { nextExtId: 537384, side: 'home' },
     537380: { nextExtId: 537384, side: 'away' },
     537377: { nextExtId: 537385, side: 'home' },
@@ -311,6 +313,12 @@ Deno.serve(async (req) => {
     let totalGoals = 0;
     let scorersRelevant = false;
     const errors: string[] = [];
+    // Sides (home/away) for which the API already names a real team. Once the
+    // API names a slot, it is the source of truth: bracket propagation (4b)
+    // must never overwrite it — a wrong KNOCKOUT_BRACKET entry would otherwise
+    // win the write race against the upsert on every run (seen 2026-07-09,
+    // France vs Morocco QF displayed with teams swapped).
+    const apiNamedSides = new Map<number, { home: boolean; away: boolean }>();
 
     try {
         // 0. Fetch all existing match data in a single query for O(1) lookup
@@ -338,6 +346,10 @@ Deno.serve(async (req) => {
 
         const data = await footballDataResponse.json();
         const allMatches = data.matches;
+
+        for (const m of allMatches) {
+            apiNamedSides.set(m.id, { home: !!m.homeTeam?.name, away: !!m.awayTeam?.name });
+        }
 
         // Scorer goals only change while matches are being played or just ended.
         // Outside those windows, skip the scorers API calls (rate-limit headroom).
@@ -391,6 +403,11 @@ Deno.serve(async (req) => {
                 if (!dbData) return true;
                 // Always process if DB still has placeholder team names
                 if (dbData.home_team === "Por definir" || dbData.away_team === "Por definir") return true;
+                // Process if API team names disagree with DB (e.g., bracket
+                // propagation placed a team in the wrong slot) so the API
+                // ordering is restored as soon as the API publishes names.
+                if (match.homeTeam.name && (TEAM_ALIASES[match.homeTeam.name] ?? match.homeTeam.name) !== dbData.home_team) return true;
+                if (match.awayTeam.name && (TEAM_ALIASES[match.awayTeam.name] ?? match.awayTeam.name) !== dbData.away_team) return true;
                 // Process if upcoming within 3 hours
                 const matchDate = new Date(match.utcDate).getTime();
                 const now = Date.now();
@@ -457,15 +474,17 @@ Deno.serve(async (req) => {
                 const now = new Date();
                 const picksClosed = matchDate <= now || status === 'live' || status === 'finished';
 
-                const rawHome = match.homeTeam.name || "Por definir";
-                const rawAway = match.awayTeam.name || "Por definir";
+                // When the API hasn't named a slot yet, keep the team already
+                // in the DB (bracket propagation may have filled it) instead
+                // of clobbering it back to the placeholder.
+                const oldData = dbMatchMap.get(match.id);
+                const rawHome = match.homeTeam.name || oldData?.home_team || "Por definir";
+                const rawAway = match.awayTeam.name || oldData?.away_team || "Por definir";
 
                 const { home: homeScore, away: awayScore } = getRegulationScores(match);
                 const { home: rawHomePenalties, away: rawAwayPenalties } = getPenaltyScores(match);
                 const isExtraTime = match.score.duration === 'EXTRA_TIME';
 
-                // Lookup old data from map (O(1), no individual SELECT)
-                const oldData = dbMatchMap.get(match.id);
                 // The "Selección sorpresa" voting window and the automatic
                 // special-points trigger are both anchored to the final
                 // match's finish time, so it must be recorded once, the
@@ -549,13 +568,13 @@ Deno.serve(async (req) => {
                         if (isSemi) {
                             const semi = bracketSlot as BracketSlotSemi;
                             const { winner: winTeam, loser: loseTeam } = getMatchResult(match);
-                            if (winTeam) {
+                            if (winTeam && !apiNamedSides.get(semi.winNextExtId)?.[semi.winSide]) {
                                 const teamCol = semi.winSide === 'home' ? 'home_team' : 'away_team';
                                 const flagCol = semi.winSide === 'home' ? 'home_flag' : 'away_flag';
                                 const { error: advanceError } = await supabase.from('matches').update({ [teamCol]: winTeam, [flagCol]: null }).eq('external_id', semi.winNextExtId);
                                 if (advanceError) errors.push(`Error advancing winner to match ${semi.winNextExtId}: ${advanceError.message}`);
                             }
-                            if (loseTeam) {
+                            if (loseTeam && !apiNamedSides.get(semi.loseNextExtId)?.[semi.loseSide]) {
                                 const teamCol = semi.loseSide === 'home' ? 'home_team' : 'away_team';
                                 const flagCol = semi.loseSide === 'home' ? 'home_flag' : 'away_flag';
                                 const { error: relegateError } = await supabase.from('matches').update({ [teamCol]: loseTeam, [flagCol]: null }).eq('external_id', semi.loseNextExtId);
@@ -565,7 +584,7 @@ Deno.serve(async (req) => {
                         } else {
                             const slot = bracketSlot as BracketSlot;
                             const { winner: winTeam } = getMatchResult(match);
-                            if (winTeam) {
+                            if (winTeam && !apiNamedSides.get(slot.nextExtId)?.[slot.side]) {
                                 const teamCol = slot.side === 'home' ? 'home_team' : 'away_team';
                                 const flagCol = slot.side === 'home' ? 'home_flag' : 'away_flag';
                                 const { error: advanceError } = await supabase.from('matches').update({ [teamCol]: winTeam, [flagCol]: null }).eq('external_id', slot.nextExtId);
@@ -632,6 +651,9 @@ Deno.serve(async (req) => {
         // Writes only when the slot doesn't already hold the team, so repeated
         // cron runs don't fire no-op UPDATEs (each one reaches every Realtime client).
         async function advanceTeam(extId: number, side: 'home' | 'away', team: string, label: string): Promise<boolean> {
+            // Once the API names this side, the upsert path owns it; the
+            // hardcoded bracket must not fight the API's ordering.
+            if (apiNamedSides.get(extId)?.[side]) return false;
             const teamCol = side === 'home' ? 'home_team' : 'away_team';
             const current = targetMap.get(extId);
             if (current && current[teamCol] === team) return false;
