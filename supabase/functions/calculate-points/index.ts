@@ -61,10 +61,13 @@ Deno.serve(async (req) => {
             throw new Error("Match home_score or away_score is null.");
         }
 
-        // Determine the actual winner:
+        // home_score/away_score hold the on-pitch final score: 90 minutes plus
+        // extra time (15+15), excluding penalty-shootout goals (see sync-matches
+        // getPitchScores). Determine the actual winner:
         // 1. If penalties exist (both non-null), winner is who won the shootout.
-        // 2. If fullTime scores exist (extra time), use them for winner/draw.
-        // 3. Otherwise, winner is determined by regulation score.
+        // 2. If fullTime scores exist (extra time), use them for winner/draw
+        //    (equal to home_score/away_score for those matches).
+        // 3. Otherwise, winner is determined by the on-pitch score.
         const decidedByPenalties = match.home_penalties !== null && match.away_penalties !== null;
         const hasFullTime = match.home_full_score !== null && match.away_full_score !== null;
         const actualHomeWins = decidedByPenalties
@@ -78,8 +81,8 @@ Deno.serve(async (req) => {
                 ? (match.away_full_score! > match.home_full_score!)
                 : (match.away_score > match.home_score);
         // actualDraw: for extra time (fullTime exists), use fullTime result.
-        // For penalties and regular matches, use regulation score (penalty matches
-        // ended in a draw during regulation, so draw predictions are correct).
+        // For penalties and regular matches, use the on-pitch score (penalty
+        // matches ended level after 120 minutes, so draw predictions are correct).
         const actualDraw = hasFullTime
             ? match.home_full_score === match.away_full_score
             : match.home_score === match.away_score;
@@ -121,7 +124,8 @@ Deno.serve(async (req) => {
                 let points_earned: number;
 
                 // 4. Calculate points
-                // Exact match is always based on regulation score
+                // Exact match compares against the on-pitch final score
+                // (90' + extra time, excluding shootout goals)
                 if (pick.predicted_home === match.home_score && pick.predicted_away === match.away_score) {
                     points_earned = exact_points;
                 } else if (

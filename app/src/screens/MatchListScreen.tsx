@@ -149,9 +149,11 @@ function formatCountdown(ms: number): string {
     return h > 0 ? `⏱ en ${h}h ${String(m).padStart(2, "0")}m` : `⏱ en ${m} min`
 }
 
-// Mirrors the calculate-points edge function: exact compares the regulation
-// score; winner uses penalties when the match had a shootout; a predicted draw
-// counts as "winner" when regulation ended level (even if penalties followed).
+// Mirrors the calculate-points edge function: exact compares the on-pitch
+// final score (90' + extra time, excluding shootout goals — what home_score
+// holds); winner uses penalties when the match had a shootout; a predicted
+// draw counts as "winner" when the match ended level after 120' (even if
+// penalties followed).
 function getPickOutcome(m: Match, pick: UserPick): "exact" | "winner" | "miss" {
     if (m.home_score === null || m.away_score === null) return "miss"
     if (pick.predicted_home === m.home_score && pick.predicted_away === m.away_score) return "exact"

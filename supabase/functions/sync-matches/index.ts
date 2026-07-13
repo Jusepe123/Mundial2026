@@ -215,44 +215,65 @@ interface MatchResult {
     loser: string | null;
 }
 
-// Regulation (90+ET) score. football-data.org exposes this directly as
+// Regulation (90') score. football-data.org exposes this directly as
 // `score.regularTime` for any match that went past 90 minutes (extra time
-// and/or penalties); that field is absent for regular matches. Prefer it
-// over deriving from fullTime, since fullTime/penalties can be internally
-// inconsistent (see getPenaltyScores below). Only fall back to the old
-// subtraction for API responses that lack regularTime entirely.
+// and/or penalties); that field is absent for regular matches. Only used
+// as an ingredient for getPitchScores/getPenaltyScores below.
 function getRegulationScores(match: any): { home: number | null; away: number | null } {
     const reg = match.score.regularTime;
     if (reg && reg.home !== null && reg.away !== null) {
         return { home: reg.home, away: reg.away };
     }
-    let home = match.score.fullTime.home;
-    let away = match.score.fullTime.away;
+    return { home: match.score.fullTime.home, away: match.score.fullTime.away };
+}
+
+// On-pitch final score: goals scored during the 90 minutes PLUS the two
+// 15-minute extra-time periods, EXCLUDING penalty-shootout goals. This is
+// what the app displays and what picks are graded against (home_score/away_score).
+// - Regular and EXTRA_TIME matches: fullTime already is the on-pitch total.
+// - PENALTY_SHOOTOUT matches: fullTime includes the shootout goals (seen
+//   2026-07-12, Germany vs Paraguay: regularTime 1-1, extraTime 0-0,
+//   penalties 3-4, fullTime 4-5), so use regularTime + extraTime instead.
+function getPitchScores(match: any): { home: number | null; away: number | null } {
+    const full = match.score.fullTime;
     const penHome = match.score.penalties?.home ?? null;
     const penAway = match.score.penalties?.away ?? null;
-    if (penHome !== null && penAway !== null && home !== null && away !== null && home !== away) {
-        home = home - penHome;
-        away = away - penAway;
+    if (penHome === null || penAway === null) {
+        return { home: full.home, away: full.away };
     }
-    return { home, away };
+    const reg = match.score.regularTime;
+    if (reg && reg.home !== null && reg.away !== null) {
+        const et = match.score.extraTime;
+        return { home: reg.home + (et?.home ?? 0), away: reg.away + (et?.away ?? 0) };
+    }
+    // regularTime missing on a shootout match: strip the shootout goals.
+    if (full.home !== null && full.away !== null) {
+        return { home: full.home - penHome, away: full.away - penAway };
+    }
+    return { home: full.home, away: full.away };
 }
 
 // Penalty shootout score. football-data.org's `score.penalties` field can be
 // internally inconsistent with fullTime/regularTime — seen 2026-07-03,
 // Australia vs Egypt: API reported `penalties: {home:4, away:4}` (a tie,
-// which a shootout can never end on) while fullTime {3,5} and regularTime
-// {1,1} implied the real shootout score was 2-4. Derive from
-// fullTime - regularTime instead, which is self-consistent by construction.
+// which a shootout can never end on) while fullTime {3,5}, regularTime {1,1}
+// and extraTime {0,0} implied the real shootout score was 2-4. Derive from
+// fullTime - regularTime - extraTime instead, which is self-consistent by
+// construction.
 function getPenaltyScores(match: any): { home: number | null; away: number | null } {
     const rawHome = match.score.penalties?.home ?? null;
     const rawAway = match.score.penalties?.away ?? null;
     if (rawHome === null || rawAway === null) return { home: null, away: null };
 
-    const reg = getRegulationScores(match);
+    const reg = match.score.regularTime;
+    const et = match.score.extraTime;
     const fullHome = match.score.fullTime.home;
     const fullAway = match.score.fullTime.away;
-    if (reg.home !== null && reg.away !== null && fullHome !== null && fullAway !== null) {
-        return { home: fullHome - reg.home, away: fullAway - reg.away };
+    if (reg && reg.home !== null && reg.away !== null && fullHome !== null && fullAway !== null) {
+        return {
+            home: fullHome - reg.home - (et?.home ?? 0),
+            away: fullAway - reg.away - (et?.away ?? 0),
+        };
     }
     return { home: rawHome, away: rawAway };
 }
@@ -374,19 +395,19 @@ Deno.serve(async (req) => {
             if (match.status === 'FINISHED') {
                 if (!dbData) return true;
                 if (dbData.status !== 'finished') return true;
-                // Skip only if regulation scores, penalties, fullTime scores and team names all match.
+                // Skip only if on-pitch scores, penalties, fullTime scores and team names all match.
                 // (Knockout bracket propagation is guaranteed by the post-processing
                 // step that reads finished matches from the DB, so unchanged finished
                 // knockout matches don't need to be re-upserted every run.)
-                const reg = getRegulationScores(match);
+                const pitch = getPitchScores(match);
                 const pen = getPenaltyScores(match);
                 const isExtraTime = match.score.duration === 'EXTRA_TIME';
                 const apiFullHome = isExtraTime ? match.score.fullTime.home : null;
                 const apiFullAway = isExtraTime ? match.score.fullTime.away : null;
                 const homeName = TEAM_ALIASES[match.homeTeam.name] ?? (match.homeTeam.name || "Por definir");
                 const awayName = TEAM_ALIASES[match.awayTeam.name] ?? (match.awayTeam.name || "Por definir");
-                if (dbData.home_score === reg.home &&
-                    dbData.away_score === reg.away &&
+                if (dbData.home_score === pitch.home &&
+                    dbData.away_score === pitch.away &&
                     dbData.home_penalties === pen.home &&
                     dbData.away_penalties === pen.away &&
                     dbData.home_team === homeName &&
@@ -481,7 +502,7 @@ Deno.serve(async (req) => {
                 const rawHome = match.homeTeam.name || oldData?.home_team || "Por definir";
                 const rawAway = match.awayTeam.name || oldData?.away_team || "Por definir";
 
-                const { home: homeScore, away: awayScore } = getRegulationScores(match);
+                const { home: homeScore, away: awayScore } = getPitchScores(match);
                 const { home: rawHomePenalties, away: rawAwayPenalties } = getPenaltyScores(match);
                 const isExtraTime = match.score.duration === 'EXTRA_TIME';
 
