@@ -29,6 +29,31 @@ interface ScoringConfig {
 interface SpecialPick {
     category: string
     prediction: string
+    points_earned: number | null
+}
+
+interface OutcomeMatch {
+    stage: string
+    home_team: string
+    away_team: string
+    home_score: number | null
+    away_score: number | null
+    home_penalties: number | null
+    away_penalties: number | null
+    status: string
+}
+
+// Same winner/loser logic as calculate-special-points (penalties decide draws).
+function getOutcome(m: OutcomeMatch): { winner: string | null; loser: string | null } {
+    if (m.home_score == null || m.away_score == null) return { winner: null, loser: null }
+    if (m.home_penalties != null && m.away_penalties != null) {
+        return m.home_penalties > m.away_penalties
+            ? { winner: m.home_team, loser: m.away_team }
+            : { winner: m.away_team, loser: m.home_team }
+    }
+    if (m.home_score > m.away_score) return { winner: m.home_team, loser: m.away_team }
+    if (m.away_score > m.home_score) return { winner: m.away_team, loser: m.home_team }
+    return { winner: null, loser: null }
 }
 
 // "surprise" (Selección sorpresa) isn't listed here — it's voted through
@@ -40,6 +65,17 @@ const CATEGORIES = [
     { category: "third", label: "Tercer lugar", pointsKey: "special_third" },
     { category: "fourth", label: "Cuarto lugar", pointsKey: "special_fourth" },
     { category: "top_scorer", label: "Goleador", pointsKey: "special_scorer" },
+]
+
+// Once the tournament ends the screen flips to a read-only summary.
+// "surprise" is deliberately NOT here: it awards no points — it's an easter
+// egg revealed as the group's majority vote (see the card below the list).
+const SUMMARY_CATEGORIES = [
+    { category: "first", label: "🥇 Campeón", pointsKey: "special_first" },
+    { category: "second", label: "🥈 Subcampeón", pointsKey: "special_second" },
+    { category: "third", label: "🥉 Tercer lugar", pointsKey: "special_third" },
+    { category: "fourth", label: "4° lugar", pointsKey: "special_fourth" },
+    { category: "top_scorer", label: "⚽ Goleador", pointsKey: "special_scorer" },
 ]
 
 function formatDeadline(dateStr: string | null): string {
@@ -62,6 +98,33 @@ export default function SpecialPicksScreen() {
     const [saving, setSaving] = useState<Record<string, boolean>>({})
     const [saved, setSaved] = useState<Record<string, boolean>>({})
     const [refreshing, setRefreshing] = useState(false)
+    const [now, setNow] = useState(() => Date.now())
+
+    useEffect(() => {
+        const id = setInterval(() => setNow(Date.now()), 30_000)
+        return () => clearInterval(id)
+    }, [])
+
+    const { data: finalMatch } = useQuery({
+        queryKey: ["finalMatchWindow"],
+        queryFn: async () => {
+            const { data } = await supabase
+                .from("matches")
+                .select("status, finished_at")
+                .eq("stage", "final")
+                .maybeSingle()
+            return data as { status: string; finished_at: string | null } | null
+        },
+        staleTime: 30_000,
+        refetchInterval: 60_000,
+    })
+
+    // Same gate as the Ranking podium: the summary appears 30 minutes after
+    // the final ends, when calculate-special-points starts assigning points.
+    const tournamentOver = useMemo(() => {
+        if (!finalMatch || finalMatch.status !== "finished" || !finalMatch.finished_at) return false
+        return now >= new Date(finalMatch.finished_at).getTime() + 30 * 60 * 1000
+    }, [finalMatch, now])
 
     const { data: configs } = useQuery({
         queryKey: ["scoring_special"],
@@ -80,12 +143,81 @@ export default function SpecialPicksScreen() {
             if (!player?.id) return []
             const { data } = await supabase
                 .from("special_picks")
-                .select("category, prediction")
+                .select("category, prediction, points_earned")
                 .eq("player_id", player.id)
             return (data ?? []) as SpecialPick[]
         },
         enabled: !!player?.id,
+        // Keep polling so points_earned appears on its own once
+        // calculate-special-points runs (30 min after the final).
+        refetchInterval: 60_000,
     })
+
+    const { data: actualPodium } = useQuery({
+        queryKey: ["podiumOutcomes"],
+        queryFn: async () => {
+            const { data } = await supabase
+                .from("matches")
+                .select("stage, home_team, away_team, home_score, away_score, home_penalties, away_penalties, status")
+                .in("stage", ["final", "third_place"])
+            const rows = (data ?? []) as OutcomeMatch[]
+            const finalRow = rows.find((m) => m.stage === "final")
+            const thirdRow = rows.find((m) => m.stage === "third_place")
+            const finalOutcome = finalRow?.status === "finished" ? getOutcome(finalRow) : { winner: null, loser: null }
+            const thirdOutcome = thirdRow?.status === "finished" ? getOutcome(thirdRow) : { winner: null, loser: null }
+            return {
+                first: finalOutcome.winner,
+                second: finalOutcome.loser,
+                third: thirdOutcome.winner,
+                fourth: thirdOutcome.loser,
+            } as Record<string, string | null>
+        },
+        enabled: tournamentOver,
+        staleTime: 60_000,
+    })
+
+    const { data: actualScorers } = useQuery({
+        queryKey: ["topScorersActual"],
+        queryFn: async () => {
+            const { data } = await supabase
+                .from("scorers")
+                .select("player_name, goals")
+                .order("goals", { ascending: false })
+                .limit(10)
+            const rows = (data ?? []) as { player_name: string; goals: number }[]
+            if (rows.length === 0) return null
+            const topGoals = rows[0].goals
+            return { names: rows.filter((s) => s.goals === topGoals).map((s) => s.player_name), goals: topGoals }
+        },
+        enabled: tournamentOver,
+        staleTime: 60_000,
+    })
+
+    // Same key/fn as SpecialPicksTable in the Ranking tab so both share cache.
+    const { data: allSpecials } = useQuery({
+        queryKey: ["allSpecialPicks"],
+        queryFn: async () => {
+            const { data } = await supabase
+                .from("special_picks")
+                .select("player_id, category, prediction, points_earned")
+            return (data ?? []) as { player_id: string; category: string; prediction: string; points_earned: number | null }[]
+        },
+        enabled: tournamentOver,
+        staleTime: 60_000,
+    })
+
+    // Easter egg: the most-voted "surprise" team(s). No points involved.
+    const surpriseMajority = useMemo(() => {
+        const votes = (allSpecials ?? []).filter((p) => p.category === "surprise")
+        if (votes.length === 0) return null
+        const counts: Record<string, number> = {}
+        for (const v of votes) counts[v.prediction] = (counts[v.prediction] ?? 0) + 1
+        const max = Math.max(...Object.values(counts))
+        return {
+            teams: Object.keys(counts).filter((t) => counts[t] === max),
+            votes: max,
+        }
+    }, [allSpecials])
 
     const existingMap = useMemo(() => {
         const map: Record<string, string> = {}
@@ -93,6 +225,18 @@ export default function SpecialPicksScreen() {
             map[p.category] = p.prediction
         }
         return map
+    }, [existingPicks])
+
+    const pickByCategory = useMemo(() => {
+        const map: Record<string, SpecialPick> = {}
+        for (const p of existingPicks ?? []) {
+            map[p.category] = p
+        }
+        return map
+    }, [existingPicks])
+
+    const totalSpecialPoints = useMemo(() => {
+        return (existingPicks ?? []).reduce((acc, p) => acc + (p.points_earned ?? 0), 0)
     }, [existingPicks])
 
     const pointsMap = useMemo(() => {
@@ -179,10 +323,123 @@ export default function SpecialPicksScreen() {
         try {
             await queryClient.invalidateQueries({ queryKey: ["special_picks"] })
             await queryClient.invalidateQueries({ queryKey: ["scoring_special"] })
+            await queryClient.invalidateQueries({ queryKey: ["finalMatchWindow"] })
+            await queryClient.invalidateQueries({ queryKey: ["podiumOutcomes"] })
+            await queryClient.invalidateQueries({ queryKey: ["topScorersActual"] })
         } finally {
             setRefreshing(false)
         }
     }, [])
+
+    if (tournamentOver) {
+        return (
+            <ScrollView
+                style={styles.container}
+                contentContainerStyle={styles.scrollContent}
+                refreshControl={
+                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
+                }
+            >
+                <Text style={styles.title}>Pronósticos especiales</Text>
+                <Text style={styles.subtitle}>🏆 Torneo finalizado — así te fue</Text>
+
+                {SUMMARY_CATEGORIES.map((cat) => {
+                    const pts = pointsMap[cat.pointsKey]
+                    const pick = pickByCategory[cat.category]
+                    const isTeamCategory = cat.category !== "top_scorer"
+
+                    let actual: string | null = null
+                    let actualIsTeam = false
+                    if (cat.category === "top_scorer") {
+                        actual = actualScorers
+                            ? `${actualScorers.names.join(", ")} (${actualScorers.goals} goles)`
+                            : null
+                    } else {
+                        actual = actualPodium?.[cat.category] ?? null
+                        actualIsTeam = true
+                    }
+
+                    const earned = pick?.points_earned
+                    const correct = earned != null && earned > 0
+
+                    return (
+                        <View key={cat.category} style={[styles.card, correct && styles.cardCorrect]}>
+                            <View style={styles.cardHeader}>
+                                <Text style={styles.cardLabel}>{cat.label}</Text>
+                                <Text style={styles.cardPoints}>{pts ?? "—"} pts</Text>
+                            </View>
+
+                            <View style={styles.summaryRow}>
+                                <Text style={styles.summaryRowLabel}>Resultado</Text>
+                                {actual ? (
+                                    <View style={styles.summaryRowValue}>
+                                        {actualIsTeam && <TeamCrest crest={null} name={actual} size={20} />}
+                                        <Text style={styles.summaryValueText} numberOfLines={1}>
+                                            {actual}
+                                        </Text>
+                                    </View>
+                                ) : (
+                                    <Text style={styles.summaryPending}>Pendiente</Text>
+                                )}
+                            </View>
+
+                            <View style={styles.summaryRow}>
+                                <Text style={styles.summaryRowLabel}>Tu elección</Text>
+                                {pick ? (
+                                    <View style={styles.summaryRowValue}>
+                                        {isTeamCategory && <TeamCrest crest={null} name={pick.prediction} size={20} />}
+                                        <Text style={styles.summaryValueText} numberOfLines={1}>
+                                            {pick.prediction}
+                                        </Text>
+                                    </View>
+                                ) : (
+                                    <Text style={styles.summaryPending}>Sin pronóstico</Text>
+                                )}
+                            </View>
+
+                            <View style={styles.summaryRow}>
+                                <Text style={styles.summaryRowLabel}>Puntos</Text>
+                                {!pick ? (
+                                    <Text style={styles.summaryPointsZero}>0 pts</Text>
+                                ) : earned == null ? (
+                                    <Text style={styles.summaryPending}>Pendiente</Text>
+                                ) : (
+                                    <Text style={correct ? styles.summaryPointsWon : styles.summaryPointsZero}>
+                                        {correct ? `+${earned}` : "0"} pts
+                                    </Text>
+                                )}
+                            </View>
+                        </View>
+                    )
+                })}
+
+                {surpriseMajority && (
+                    <View style={[styles.card, styles.easterEggCard]}>
+                        <Text style={styles.cardLabel}>🎁 Selección sorpresa</Text>
+                        <Text style={styles.easterEggText}>
+                            Por mayoría de votos, la selección sorpresa es...
+                        </Text>
+                        <View style={styles.easterEggReveal}>
+                            {surpriseMajority.teams.map((team) => (
+                                <View key={team} style={styles.easterEggTeam}>
+                                    <TeamCrest crest={null} name={team} size={36} />
+                                    <Text style={styles.easterEggTeamName}>{team}</Text>
+                                </View>
+                            ))}
+                        </View>
+                        <Text style={styles.easterEggHint}>
+                            Solo por diversión — no otorga puntos
+                        </Text>
+                    </View>
+                )}
+
+                <View style={styles.totalCard}>
+                    <Text style={styles.totalLabel}>Total especiales</Text>
+                    <Text style={styles.totalValue}>{totalSpecialPoints} pts</Text>
+                </View>
+            </ScrollView>
+        )
+    }
 
     return (
         <ScrollView
@@ -370,6 +627,100 @@ const styles = StyleSheet.create({
     },
     cardClosed: {
         opacity: 0.7,
+    },
+    cardCorrect: {
+        borderColor: colors.accent + "60",
+    },
+    summaryRow: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        paddingVertical: 6,
+    },
+    summaryRowLabel: {
+        color: colors.textSecondary,
+        fontSize: 13,
+    },
+    summaryRowValue: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        flexShrink: 1,
+        marginLeft: 12,
+    },
+    summaryValueText: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "600",
+        flexShrink: 1,
+    },
+    summaryPending: {
+        color: colors.textSecondary,
+        fontSize: 13,
+        fontStyle: "italic",
+    },
+    summaryPointsWon: {
+        color: colors.accent,
+        fontSize: 15,
+        fontWeight: "bold",
+    },
+    summaryPointsZero: {
+        color: colors.textSecondary,
+        fontSize: 15,
+        fontWeight: "bold",
+    },
+    easterEggCard: {
+        alignItems: "center",
+    },
+    easterEggText: {
+        color: colors.textSecondary,
+        fontSize: 14,
+        fontStyle: "italic",
+        textAlign: "center",
+        marginTop: 8,
+        marginBottom: 14,
+    },
+    easterEggReveal: {
+        flexDirection: "row",
+        justifyContent: "center",
+        gap: 20,
+        marginBottom: 12,
+    },
+    easterEggTeam: {
+        alignItems: "center",
+        gap: 6,
+    },
+    easterEggTeamName: {
+        color: colors.accent,
+        fontSize: 16,
+        fontWeight: "bold",
+    },
+    easterEggHint: {
+        color: colors.textSecondary,
+        fontSize: 11,
+        fontStyle: "italic",
+    },
+    totalCard: {
+        backgroundColor: colors.surface,
+        borderRadius: 16,
+        borderWidth: 2,
+        borderColor: colors.accent,
+        paddingVertical: 20,
+        alignItems: "center",
+        marginTop: 8,
+    },
+    totalLabel: {
+        color: colors.textSecondary,
+        fontSize: 13,
+        fontWeight: "600",
+        textTransform: "uppercase",
+        letterSpacing: 2,
+        marginBottom: 6,
+    },
+    totalValue: {
+        color: colors.accent,
+        fontSize: 36,
+        fontWeight: "bold",
     },
     cardHeader: {
         flexDirection: "row",

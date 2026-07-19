@@ -16,6 +16,7 @@ import supabase from "../lib/supabase"
 import usePlayerStore from "../store/usePlayerStore"
 import TeamCrest from "../components/TeamCrest"
 import MatchPicksTable from "../components/MatchPicksTable"
+import SpecialPicksTable from "../components/SpecialPicksTable"
 import { colors } from "../theme/colors"
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window")
@@ -252,10 +253,13 @@ async function fetchPlayerStats(playerId: string): Promise<PlayerStats> {
         .select("id, predicted_home, predicted_away, points_earned, match:match_id!inner(id, home_score, away_score, status, home_team, away_team, match_date)")
         .eq("player_id", playerId)
 
+    // "surprise" is excluded: it's a no-points easter egg, counting it would
+    // inflate the "Especiales" denominator with a category nobody can hit.
     const { data: specials } = await supabase
         .from("special_picks")
         .select("points_earned")
         .eq("player_id", playerId)
+        .neq("category", "surprise")
 
     const allPicks = (picks ?? []) as any[]
     const finishedPicks = allPicks
@@ -460,6 +464,7 @@ export default function LeaderboardScreen() {
             await queryClient.invalidateQueries({ queryKey: ["matchStats"] })
             await queryClient.invalidateQueries({ queryKey: ["currentPicks"] })
             await queryClient.invalidateQueries({ queryKey: ["finalMatchWindow"] })
+            await queryClient.invalidateQueries({ queryKey: ["allSpecialPicks"] })
             if (player?.id) {
                 const stats = await fetchPlayerStats(player.id)
                 setOwnStats(stats)
@@ -505,6 +510,7 @@ export default function LeaderboardScreen() {
                 () => {
                     queryClient.invalidateQueries({ queryKey: ["leaderboard"] })
                     queryClient.invalidateQueries({ queryKey: ["currentMatch"] })
+                    queryClient.invalidateQueries({ queryKey: ["allSpecialPicks"] })
                 }
             )
             .subscribe()
@@ -677,6 +683,16 @@ export default function LeaderboardScreen() {
                                         title={currentMatches.length === 1 ? (match.status === "live" ? "🔴 Partido en vivo" : "📋 Partido anterior") : undefined}
                                     />
                                 ))}
+                            </>
+                        )}
+                        {leaderboard && leaderboard.length > 0 && (
+                            <>
+                                <View style={styles.sectionDivider} />
+                                <SpecialPicksTable
+                                    players={leaderboard}
+                                    currentPlayerId={player?.id}
+                                    showSurprise={specialScoringDone}
+                                />
                             </>
                         )}
                         {ownStats && player ? (

@@ -35,6 +35,7 @@ mundial-2026/
 │   │   ├── components/
 │   │   │   ├── TeamCrest.tsx      # Círculo con bandera: crest → flagcdn/flagsapi → alt CDN → inicial
 │   │   │   ├── MatchPicksTable.tsx # Tabla de pronósticos de todos los jugadores por partido
+│   │   │   ├── SpecialPicksTable.tsx # Picks especiales de todos los jugadores (Ranking): grid podio + goleador + sorpresa, pts y Σ post-scoring
 │   │   │   ├── BracketView.tsx    # Llaves knockout: columnas 16avos→Final con conectores, scroll horizontal
 │   │   │   ├── PlayerFigure.tsx   # SVG de jugador con camiseta (color/patrón) + número
 │   │   │   └── SurpriseSurveyModal.tsx # Popup "Selección sorpresa": se muestra sola durante la ventana de voto, montada globalmente
@@ -45,7 +46,7 @@ mundial-2026/
 │   │       ├── MatchListScreen.tsx# Partidos con segmentos, Realtime, sync-matches una vez al montar
 │   │       ├── PickScreen.tsx     # Pronóstico por partido, invalida userPicks al guardar
 │   │       ├── GroupsScreen.tsx   # Segmentos "Llaves" (BracketView, default) / "Grupos" (tabla posiciones)
-│   │       ├── SpecialPicksScreen.tsx # 5 categorías especiales (sin "surprise", ver SurpriseSurveyModal)
+│   │       ├── SpecialPicksScreen.tsx # 5 categorías especiales (sin "surprise", ver SurpriseSurveyModal); post-torneo (final +30min) flipea a summary read-only: resultado real vs pick + puntos + total + easter egg sorpresa
 │   │       ├── TopScorersScreen.tsx   # Goleadores + equipos más goleadores
 │   │       ├── MatchDetailScreen.tsx  # Detalle de partido individual
 │   │       └── LeaderboardScreen.tsx  # Ranking + estadísticas + partido en vivo + podio final
@@ -141,7 +142,7 @@ RootStack (sin header)
   - Ventana de voto: abre en el kickoff del partido `final` (`match_date <= now()`), cierra 30 min después de que el partido termine (`finished_at + 30min`). Mientras el partido no haya terminado, la ventana queda abierta indefinidamente (no tiene límite superior hasta que termine).
   - El popup se muestra solo si el jugador no tiene ya un `special_picks` con `category='surprise'`. Es descartable ("Luego") pero reaparece en la próxima apertura de la app si sigue sin votar y la ventana sigue abierta; una vez que vota, desaparece para siempre (no hay tabla de "ya visto", se infiere de la existencia del pick).
   - Validación server-side en `upsert_special_pick` (RPC, migración `20260703180740`): rechaza la escritura si `category='surprise'` y la ventana está cerrada (el chequeo del cliente no alcanza, mismo motivo que `picks_closed` en `upsert_pick`).
-  - **`surprise` NO se puntúa automáticamente** — a diferencia de las otras 5 categorías, no tiene una respuesta objetivamente correcta, se sigue calificando a mano desde el dashboard (mismo patrón que `scoring_config`).
+  - **`surprise` NO otorga puntos** (decisión 19-jul-2026): es un easter egg. Nadie recibe puntos y `points_earned` queda NULL para siempre — no se califica ni a mano. Al cerrar la ventana de voto, la app muestra "Por mayoría de votos, la selección sorpresa es..." con el/los equipo(s) más votado(s) (empates se muestran juntos): card en el summary post-torneo de `SpecialPicksScreen` y nota en la sección sorpresa de `SpecialPicksTable` (Ranking). `fetchPlayerStats` (LeaderboardScreen) la excluye del contador "Especiales".
 - **Puntos especiales automáticos** (`calculate-special-points`, nueva edge function): puntúa `first`/`second`/`third`/`fourth`/`top_scorer` automáticamente. Se dispara desde `sync-matches` en cada corrida del cron, pero solo actúa 30 min después de que el `final` termina (mismo cierre que la ventana de sorpresa) — antes de eso responde `{processed:0, skipped:...}` sin hacer nada. Idempotente: solo escribe `points_earned` cuando el valor calculado cambia respecto al guardado (evita UPDATEs no-op cada minuto para siempre, mismo criterio que `advanceTeam` en el bracket).
   - `first`/`second`: ganador/perdedor del partido `final` (penales si corresponde, si no score reglamentario).
   - `third`/`fourth`: ganador/perdedor del partido `third_place`.
@@ -221,7 +222,7 @@ ListFooterComponent:
 | special_second | — | — | — | 30 | 2026-07-04T22:27Z |
 | special_third | — | — | — | 20 | 2026-07-04T22:27Z |
 | special_fourth | — | — | — | 15 | 2026-07-04T22:27Z |
-| special_surprise | — | — | — | 25 | 2026-06-28T18:59Z (campo sin uso — ver "Cierre de Torneo" para la ventana real) |
+| special_surprise | — | — | — | 25 (sin uso — no otorga puntos, easter egg) | 2026-06-28T18:59Z (campo sin uso — ver "Cierre de Torneo" para la ventana real) |
 | special_scorer | — | — | — | 35 | 2026-07-04T22:27Z |
 
 ### RPC Functions (SECURITY DEFINER)
@@ -309,6 +310,7 @@ ListFooterComponent:
 | 03-jul | — | 🚀 OTA + Edge Function + DB | **Cierre de Torneo**: puntos especiales automáticos + podio final + encuesta "Selección sorpresa" post-final. Ver sección "Cierre de Torneo" para el detalle completo. Nueva migración `20260703180740` (`matches.finished_at`, índice único de "final", ventana de voto server-side en `upsert_special_pick`), nueva edge function `calculate-special-points`, `SurpriseSurveyModal.tsx` nuevo (montado en AppNavigator), `SpecialPicksScreen` pierde la categoría "surprise", `LeaderboardScreen` gatea el podio final a 30 min post-final. Sin dependencias npm nuevas (notificación in-app, no push nativo — decisión confirmada con el usuario para evitar rebuild nativo). |
 | 03-jul | — | ✅ DB | **Extensión de deadline de especiales**: `scoring_config.deadline` de `special_first`/`second`/`third`/`fourth`/`scorer` extendido 24h desde el momento de la corrida (nueva fecha: 04-jul ~22:27Z), migración `20260703182701_extend_special_picks_deadline.sql`. `special_surprise` no se tocó (ya no usa este campo, ver "Cierre de Torneo"). |
 | 07-jul | — | ✅ Edge Function + DB | **Fix tiempo extra**: `calculate-points` no detectaba ganador en partidos definidos en alargue (Argentina 1-1 Cabo Verde FT 3-2, Belgium 2-2 Senegal FT 3-2). Nueva migración `20260707120000_add_full_time_scores.sql` (columnas `home_full_score`/`away_full_score`). sync-matches almacena fullTime cuando `duration=EXTRA_TIME`. calculate-points usa fullTime para winner/draw cuando existe. Backfill automático vía sync-matches. Puntos recalculados: Andy +16, Jose +8, Mel +8, Turco +16, Lily +16, Guille -8; usuarios sin cambios: Orlando 0, Ara 0, Tef 0. |
+| 19-jul | — | 🚀 OTA + DB | **Picks especiales visibles + summary post-torneo + sorpresa como easter egg**. (1) `SpecialPicksTable.tsx` nuevo, en el footer del Ranking: grid podio (crest + abreviatura por jugador, columnas 🥇🥈🥉4°) + secciones Goleador y Sorpresa; cada categoría se revela solo cuando su deadline pasó, la sorpresa recién al cerrar la ventana de voto (`specialScoringDone`); post-scoring muestra pts por celda y columna Σ (total especiales por jugador); refetch vía Realtime de `players`. (2) `SpecialPicksScreen`: al pasar `finished_at + 30min` del final flipea a summary read-only por categoría (resultado real — podio desde matches con penales, goleador(es) desde `scorers` — vs pick propio + puntos + total). (3) **Selección sorpresa ya NO otorga puntos** (decisión del usuario): easter egg "Por mayoría de votos, la selección sorpresa es..." (empates se muestran juntos); `fetchPlayerStats` excluye surprise del contador "Especiales". (4) Matcher de goleador verificado contra los 5 picks reales de la DB (15/15 asserts, incl. escenario de empate) — sin cambios server-side. (5) DB: DELETE de los 5 votos sorpresa pre-torneo (guard `points_earned IS NULL`, revisado por database-reviewer, totals verificados intactos) para que los 9 jugadores voten frescos en el popup durante la final. |
 | 12-jul | — | ✅ Edge Function | **Goles del alargue cuentan en el score final**: `home_score`/`away_score` ahora guardan el score en cancha (90' + 15+15, sin goles de shootout) vía `getPitchScores()` — antes solo 90'. La app muestra el score real y el "Exacto" se compara contra él. `getPenaltyScores()` corregido a `fullTime - regularTime - extraTime` (antes no restaba extraTime; habría fallado en un shootout con goles en el alargue). Partidos corregidos (backfill automático + recálculo): Belgium 3-2 Senegal, Argentina 3-2 Cape Verde, Norway 1-2 England, Argentina 3-1 Switzerland. Los 4 de penales no cambiaron (alargue 0-0). Puntos: Orlando +18 (1-2 a Norway-England pasó a Exacto), Turco -34 (su 1-1 a Argentina-Switzerland era Exacto solo contra el score de 90'). Verificado contra la API real (regularTime/extraTime/fullTime/penalties) y en producción. |
 
 ## Reglas para el Agente
